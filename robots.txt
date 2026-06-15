@@ -1,0 +1,5 @@
+# Quick Exhale — https://quickexhale.com
+User-agent: *
+Allow: /
+
+Sitemap: https://quickexhale.com/sitemap.xml

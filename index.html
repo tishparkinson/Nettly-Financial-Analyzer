@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quick Exhale — Brain dump tool | Top three &amp; timeboxing</title>
+  <meta name="description" content="Quick Exhale is a calm brain dump tool: guided brain dump ideas, a simple brain dump journal flow, then your best three priorities and time blocks. Free core; Pro adds calendar export and backup.">
+  <meta name="robots" content="index, follow, max-image-preview:large">
+  <meta name="theme-color" content="#faf9f6">
+  <meta property="og:title" content="Quick Exhale — Brain dump tool &amp; timeboxing">
+  <meta property="og:description" content="A guided brain dump when your head is full—brain dump ideas and prompts, then pick your best three and protect time on your calendar.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://quickexhale.com/">
+  <meta property="og:site_name" content="Quick Exhale">
+  <meta property="og:locale" content="en_US">
+  <!-- When you have a 1200×630 image: <meta property="og:image" content="https://quickexhale.com/og-image.png"> -->
+  <link rel="canonical" href="https://quickexhale.com/">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Quick Exhale — Brain dump tool">
+  <meta name="twitter:description" content="Guided brain dump, brain dump ideas &amp; prompts, then your best three priorities—timeboxed on your calendar.">
+  <!-- Google Analytics 4: paste after this comment (replace G-XXXXXXXXXX). Update privacy policy when live.
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag(){dataLayer.push(arguments);}
+    gtag('js', new Date());
+    gtag('config', 'G-XXXXXXXXXX');
+  </script>
+  -->
+  <!-- Google Search Console: paste verification <meta name="google-site-verification" content="..."> here -->
+  <link rel="stylesheet" href="./styles.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "Quick Exhale",
+    "applicationCategory": "ProductivityApplication",
+    "applicationSubCategory": "Brain dump, mental unload, and timeboxing",
+    "operatingSystem": "Web Browser",
+    "isAccessibleForFree": true,
+    "description": "A calm brain dump tool for the web: run a guided brain dump with prompts and brain dump ideas, like a focused brain dump journal session, pick your best brain dump priorities (exactly three), and timebox them into calendar blocks.",
+    "slogan": "Breathe out the mental load.",
+    "browserRequirements": "Requires JavaScript. Requires HTML5.",
+    "keywords": "brain dump, brain dump journal, brain dump ideas, best brain dump, brain dump tool, guided brain dump, mental unload, overwhelm tool, timeboxing, top three priorities, open loops, Google Calendar time block",
+    "provider": {
+      "@type": "Organization",
+      "name": "Verdant Web Solutions, LLC",
+      "address": { "@type": "PostalAddress", "addressRegion": "ID", "addressCountry": "US" }
+    },
+    "featureList": [
+      "Guided brain dump session with rotating prompts",
+      "Choose exactly 3 priorities",
+      "Timebox top priorities",
+      "Google Calendar export (Pro)",
+      "Apple and Outlook export via ICS (Pro)",
+      "Optional cloud backup of session data (Pro)"
+    ],
+    "offers": {
+      "@type": "Offer",
+      "price": "9.00",
+      "priceCurrency": "USD",
+      "priceSpecification": {
+        "@type": "UnitPriceSpecification",
+        "price": "9.00",
+        "priceCurrency": "USD",
+        "billingDuration": 1,
+        "billingIncrement": 1,
+        "unitCode": "MON"
+      },
+      "description": "Pro monthly subscription: calendar exports and cloud backup. Cancel anytime in Stripe Customer Portal."
+    },
+    "url": "https://quickexhale.com/"
+  }
+  </script>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    "name": "Quick Exhale",
+    "url": "https://quickexhale.com/",
+    "description": "Brain dump tool and guided brain dump journal flow: capture brain dump ideas, choose your best three priorities, and schedule focused time blocks at quickexhale.com.",
+    "inLanguage": "en-US",
+    "publisher": {
+      "@type": "Organization",
+      "name": "Verdant Web Solutions, LLC",
+      "url": "https://quickexhale.com/",
+      "email": "verdantwebsolutions@gmail.com",
+      "address": {
+        "@type": "PostalAddress",
+        "addressRegion": "ID",
+        "addressCountry": "US"
+      }
+    }
+  }
+  </script>
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <p class="brand-mark">Quick Exhale</p>
+      <h1>Breathe out the mental load.</h1>
+      <p class="tagline">Less noise in your head. More room for today.</p>
+      <p class="small hero-links"><a href="./about.html">About</a> · <a href="./privacy.html">Privacy</a> · <a href="./terms.html">Terms</a></p>
+    </header>
+
+    <section class="card" id="auth-card">
+      <h2>Account and backup</h2>
+      <p class="small">Optional sign-in helps you restore history if you clear this browser, and unlocks Pro (monthly only).</p>
+      <div class="row">
+        <input id="email-input" type="email" placeholder="your@email.com" autocomplete="email">
+        <button id="email-login" type="button">Email sign-in link</button>
+        <button id="logout" type="button" class="secondary">Log out</button>
+      </div>
+      <p id="auth-status" class="small">Not signed in</p>
+      <p id="plan-status" class="small">Plan: Free</p>
+      <div class="row">
+        <button id="checkout-pro" type="button">Upgrade to Pro ($9/mo)</button>
+        <button id="manage-billing" type="button" class="secondary hidden">Manage subscription</button>
+        <button id="backup-now" type="button" class="secondary">Backup to cloud</button>
+        <button id="restore-now" type="button" class="secondary">Restore from cloud</button>
+      </div>
+      <p class="small">Manage subscription opens Stripe’s secure billing page (update card, cancel renewal, invoices).</p>
+    </section>
+
+    <section class="card" id="start-card">
+      <h2>Start in under a minute</h2>
+      <label class="stack">
+        Session length
+        <select id="session-minutes">
+          <option value="3">3 minutes</option>
+          <option value="5" selected>5 minutes (recommended)</option>
+          <option value="10">10 minutes</option>
+          <option value="15">15 minutes</option>
+        </select>
+      </label>
+
+      <fieldset>
+        <legend>How do you want to unload?</legend>
+        <label><input type="radio" name="input-method" value="textbox" checked> Type in the box</label>
+        <label><input type="radio" name="input-method" value="pen-paper"> Pen and paper</label>
+      </fieldset>
+
+      <p class="small">Context chips (optional):</p>
+      <div id="chips" class="chips"></div>
+
+      <button id="select-all-chips" type="button" class="secondary">Select all chips</button>
+      <button id="start-session" type="button">Start session</button>
+    </section>
+
+    <section class="card hidden" id="dump-card">
+      <div class="timer-row">
+        <h2>Unload</h2>
+        <p id="timer" class="timer">05:00</p>
+      </div>
+      <p class="prompt">Prompt: <span id="active-prompt">Take a breath and begin.</span></p>
+
+      <div id="textbox-mode">
+        <textarea id="dump-input" placeholder="Anything on your mind. One line per open loop."></textarea>
+        <div class="row">
+          <button id="add-lines" type="button" class="secondary">Tidy lines</button>
+          <button id="mark-important" type="button" class="secondary">Star first line</button>
+        </div>
+      </div>
+
+      <div id="paper-mode" class="hidden">
+        <p class="small">Write in your notebook while prompts rotate. Optionally type key items here afterward.</p>
+        <textarea id="paper-recap" placeholder="Optional: type items to organize."></textarea>
+      </div>
+
+      <button id="end-now" type="button">End session now</button>
+    </section>
+
+    <section class="card hidden" id="review-card">
+      <h2>You noted <span id="open-loop-count">0</span> open loops.</h2>
+      <p class="subtle" id="relief-line">That is a lot to hold at once. Small steps create calm.</p>
+      <h3>Organized list</h3>
+      <ul id="organized-list"></ul>
+      <button id="repeat-session" type="button" class="secondary">Another round</button>
+      <button id="continue-priorities" type="button">Choose top three</button>
+    </section>
+
+    <section class="card hidden" id="repeat-card">
+      <h2>Go again?</h2>
+      <p class="small">Add to this list or start fresh.</p>
+      <div class="row">
+        <button id="repeat-add" type="button">Add to current list</button>
+        <button id="repeat-new" type="button" class="secondary">Start a new list</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="priority-card">
+      <h2>Choose exactly three</h2>
+      <p class="small">If everything matters today, nothing does.</p>
+      <ul id="priority-list"></ul>
+      <p id="priority-count" class="small">Selected: 0 / 3</p>
+      <button id="to-timebox" type="button" disabled>Schedule time blocks</button>
+    </section>
+
+    <section class="card hidden" id="timebox-card">
+      <h2>Protect time for your three</h2>
+      <form id="timebox-form"></form>
+      <div class="row">
+        <button id="export-google" type="button">Google Calendar (Pro)</button>
+        <button id="export-ics" type="button" class="secondary">Download .ics (Pro)</button>
+      </div>
+      <p class="small">By default your notes stay in this browser. Pro adds calendar export and optional cloud backup.</p>
+      <button id="reset-all" type="button" class="secondary">Reset local data</button>
+    </section>
+
+    <footer class="site-footer">
+      <p><a href="./index.html">App</a> · <a href="./about.html">About</a> · <a href="./privacy.html">Privacy</a> · <a href="./terms.html">Terms</a></p>
+      <p class="footer-note">© Verdant Web Solutions, LLC · Idaho</p>
+    </footer>
+  </main>
+
+  <script src="./config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./app.js"></script>
+</body>
+</html>

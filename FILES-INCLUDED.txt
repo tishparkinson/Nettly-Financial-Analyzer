@@ -1,0 +1,39 @@
+Quick Exhale — files that belong on your machine / in Git / in Netlify
+
+Core pages & assets (required):
+  index.html
+  about.html
+  privacy.html
+  terms.html
+  styles.css
+  app.js
+  config.js
+
+SEO:
+  robots.txt
+  sitemap.xml
+
+Deploy & backend:
+  netlify.toml
+  netlify/functions/_shared.js
+  netlify/functions/create-checkout-session.js
+  netlify/functions/create-billing-portal-session.js
+  netlify/functions/finalize-checkout.js
+  netlify/functions/get-history.js
+  netlify/functions/save-history.js
+  netlify/functions/subscription-status.js
+  netlify/functions/stripe-webhook.js
+
+Database:
+  supabase.sql
+
+Docs / ops:
+  README.md
+  LAUNCH-TODO.md
+  .env.example
+  .gitignore
+
+Zip helper:
+  make-site-zip.ps1   (run locally to create quickexhale-site.zip)
+
+NOT part of the public site (do not upload): Cursor mcps/, agent-transcripts/, terminals/
