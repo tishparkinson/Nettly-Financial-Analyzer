@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Find Access Key — Nettly</title>
+  <meta name="description" content="Recover your Nettly access key using Stripe verification.">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <p class="logo">NETTLY</p>
+      <h1 style="margin:0.5rem 0 0;color:var(--navy);font-size:1.35rem;">Find my access key</h1>
+      <p class="sub">We'll send you through Stripe to verify your email, then show your key here.</p>
+    </header>
+
+    <div id="state-form" class="card">
+      <label>Email used at checkout</label>
+      <input id="find-key-email" type="email" placeholder="you@example.com" autocomplete="email">
+      <button type="button" class="btn btn-primary" id="btn-find-key">Continue with Stripe</button>
+      <p id="find-key-error" class="gate-error hidden"></p>
+      <p class="small">Stripe will verify it's really you. No Resend or separate login needed.</p>
+    </div>
+
+    <div id="state-loading" class="card hidden">
+      <p class="small">Retrieving your access key…</p>
+    </div>
+
+    <div id="state-key" class="hidden">
+      <div class="card access-key-card">
+        <h3>Your access key</h3>
+        <p class="small">Save this for other devices.</p>
+        <div class="access-key-box" id="access-key-display"></div>
+        <button type="button" class="btn btn-secondary" id="btn-copy-key">Copy access key</button>
+        <a class="btn btn-primary" href="/">Open Nettly</a>
+      </div>
+    </div>
+
+    <div id="state-error" class="card hidden">
+      <p id="error-message" class="gate-error"></p>
+      <a class="btn btn-secondary" href="/find-key.html">Try again</a>
+    </div>
+
+    <footer class="site">
+      <p class="footer-links">
+        <a href="/">App</a>
+        <a href="./privacy.html">Privacy</a>
+        <a href="./terms.html">Terms</a>
+        <a href="https://billing.stripe.com/p/login/8x25kE7Mq8T7edH8341RC00" target="_blank" rel="noopener noreferrer">Manage Subscription</a>
+      </p>
+      <p class="small">© Verdant Web Solutions, LLC · Idaho</p>
+    </footer>
+  </main>
+  <script type="module" src="./js/find-key.js"></script>
+</body>
+</html>

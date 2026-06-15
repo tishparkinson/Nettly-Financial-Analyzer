@@ -1,8 +1,17 @@
 [build]
+  command = "npm install"
   publish = "."
-  functions = "netlify/functions"
+
+[functions]
+  directory = "netlify/functions"
+  node_bundler = "esbuild"
 
 [[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
+  from = "/subscribed"
+  to = "/subscribed.html"
+  status = 200
+
+[[redirects]]
+  from = "/find-key"
+  to = "/find-key.html"
   status = 200

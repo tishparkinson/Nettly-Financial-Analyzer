@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome — Nettly</title>
+  <meta name="description" content="Your Nettly access key and next steps.">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <p class="logo">NETTLY</p>
+      <h1 style="margin:0.5rem 0 0;color:var(--navy);font-size:1.35rem;">You're in</h1>
+      <p class="sub trial-copy">Free for 7 days, then $6.99/month unless you cancel before the trial ends.</p>
+    </header>
+
+    <div id="state-loading" class="card">
+      <p class="small">Confirming your trial…</p>
+    </div>
+
+    <div id="state-error" class="card hidden">
+      <p id="error-message" class="gate-error"></p>
+      <a class="btn btn-secondary" href="/">Back to Nettly</a>
+    </div>
+
+    <div id="state-success" class="hidden">
+      <div class="card access-key-card">
+        <h3>Save your access key</h3>
+        <p class="small">You'll need this on other devices. Store it somewhere safe — like a password manager.</p>
+        <div class="access-key-box" id="access-key-display"></div>
+        <button type="button" class="btn btn-secondary" id="btn-copy-key">Copy access key</button>
+        <p class="small" id="copy-feedback" style="margin-top:0.5rem;"></p>
+      </div>
+
+      <p class="small" style="text-align:center;">What would you like to do first?</p>
+      <a class="btn btn-primary" href="/?start=new" id="btn-start-new">Start fresh — paste transactions</a>
+      <a class="btn btn-secondary" href="/?start=snapshot" id="btn-start-snapshot">Continue from snapshot</a>
+    </div>
+
+    <footer class="site">
+      <p class="footer-links">
+        <a href="./privacy.html">Privacy</a>
+        <a href="./terms.html">Terms</a>
+        <a href="https://billing.stripe.com/p/login/8x25kE7Mq8T7edH8341RC00" target="_blank" rel="noopener noreferrer">Manage Subscription</a>
+        <a href="./find-key.html">Find my access key</a>
+      </p>
+      <p class="small">© Verdant Web Solutions, LLC · Idaho</p>
+    </footer>
+  </main>
+  <script type="module" src="./js/subscribed.js"></script>
+</body>
+</html>
