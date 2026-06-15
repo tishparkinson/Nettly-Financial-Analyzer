@@ -7,10 +7,6 @@ function getStripe() {
   return new Stripe(key);
 }
 
-function getSiteUrl() {
-  return (process.env.SITE_URL || "https://getnettly.com").replace(/\/$/, "");
-}
-
 function jsonResponse(statusCode, body) {
   return {
     statusCode,
