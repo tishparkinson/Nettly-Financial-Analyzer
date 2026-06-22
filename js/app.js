@@ -274,6 +274,7 @@ document.getElementById("btn-merchants-done").addEventListener("click", () => {
   });
   saveState(state);
   show("safety");
+  populateSafetyNetAccountList();
   renderSafetySummary();
 });
 
@@ -329,6 +330,19 @@ function renderSafetySummary() {
     <p><strong>${fmtMoney(total)}</strong></p>
     <p class="small">Months Covered (needs only, 90-day average): <strong>${fmtMonths(months)}</strong></p>
   `;
+}
+
+
+function populateSafetyNetAccountList() {
+  let dl = document.getElementById("sn-account-hints");
+  if (!dl) {
+    dl = document.createElement("datalist");
+    dl.id = "sn-account-hints";
+    document.getElementById("sn-label").setAttribute("list", "sn-account-hints");
+    document.getElementById("sn-label").parentNode.appendChild(dl);
+  }
+  const names = (state.accounts || []).map((a) => a.nickname).filter(Boolean);
+  dl.innerHTML = names.map((n) => `<option value="${escapeAttr(n)}">`).join("");
 }
 
 document.getElementById("btn-to-dashboard").addEventListener("click", () => {
@@ -392,10 +406,10 @@ function renderTags(txs) {
   document.getElementById("tx-tag-list").innerHTML = recent.length
     ? applyBtnHtml + recent.map((tx) => {
       const tagStr = (tx.tags || []).length ? (tx.tags || []).map((t) => `#${escapeHtml(t)}`).join(" ") : "";
-      return `<div class="tx-tag-row" style="display:flex;align-items:flex-start;gap:0.5rem;">
+      return `<div class="tx-tag-row" style="display:grid;grid-template-columns:1.25rem 1fr;gap:0.5rem;align-items:start;">
         <input type="checkbox" class="tx-tag-check" data-tx-id="${escapeAttr(tx.id)}" style="margin-top:0.25rem;flex-shrink:0;">
-        <div style="flex:1;cursor:pointer;" data-tx-id="${escapeAttr(tx.id)}">
-          <div>${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0, 50))}</div>
+        <div style="min-width:0;cursor:pointer;overflow:hidden;" data-tx-id="${escapeAttr(tx.id)}">
+          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0, 50))}</div>
           <div class="small">${fmtMoney(Math.abs(tx.amount))} ${tagStr ? `· ${tagStr}` : ""}</div>
         </div>
       </div>`;
@@ -536,8 +550,8 @@ function renderDashboard() {
   document.getElementById("bar-wants").style.width = `${nw.wantsPct}%`;
   const needsAmtEl = document.getElementById("needs-amt");
   const wantsAmtEl = document.getElementById("wants-amt");
-  needsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="needs">Needs ${fmtMoney(nw.needs)} (${nw.needsPct}%) ▾</button>`;
-  wantsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="wants">Wants ${fmtMoney(nw.wants)} (${nw.wantsPct}%) ▾</button>`;
+  needsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="need">Needs ${fmtMoney(nw.needs)} (${nw.needsPct}%) ▾</button>`;
+  wantsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="want">Wants ${fmtMoney(nw.wants)} (${nw.wantsPct}%) ▾</button>`;
   document.getElementById("nw-detail").innerHTML = "";
 
   document.getElementById("subs-summary").textContent =
@@ -575,7 +589,7 @@ document.addEventListener("change", (e) => {
 document.addEventListener("click", (e) => {
   const btn = e.target.closest(".nw-toggle");
   if (!btn) return;
-  const type = btn.dataset.nw; // "needs" or "wants"
+  const type = btn.dataset.nw; // "need" or "want" (matches tx.needWant)
   const txs = getFilteredTransactions();
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 90);
@@ -583,7 +597,7 @@ document.addEventListener("click", (e) => {
     if (tx.amount >= 0) return false;
     if (new Date(tx.date) < cutoff) return false;
     if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") return false;
-    return tx.needWant === type;
+    return tx.needWant === type || (type === 'need' && tx.needWant === 'needs') || (type === 'want' && tx.needWant === 'wants');
   });
 
   // Top categories
