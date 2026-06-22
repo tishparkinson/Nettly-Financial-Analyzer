@@ -197,12 +197,13 @@
 
       <div class="card">
         <h3>Needs vs wants</h3>
-        <p class="small">No judgment — just the current split.</p>
+        
         <div class="split-bar">
           <div class="split-needs" id="bar-needs" style="width:78%"></div>
           <div class="split-wants" id="bar-wants" style="width:22%"></div>
         </div>
         <p class="small"><span id="needs-amt">Needs $0</span> · <span id="wants-amt">Wants $0</span></p>
+        <div id="nw-detail"></div>
       </div>
 
       <div class="card">
@@ -227,6 +228,12 @@
       <div class="card">
         <h3>Insights</h3>
         <ul id="insights-list" class="small"></ul>
+      </div>
+
+      <div class="card">
+        <h3>Review &amp; Fix Categories</h3>
+        <p class="small">Change a category here and it applies to all transactions from that merchant.</p>
+        <div id="cat-review-list"></div>
       </div>
 
       <div class="card">
@@ -259,17 +266,5 @@
   </div>
 
   <script type="module" src="./js/app.js"></script>
-<script>
-// TESTING MODE — gate bypassed
-document.addEventListener('DOMContentLoaded', function() {
-  var gate = document.getElementById('screen-gate');
-  var home = document.getElementById('screen-home');
-  if (gate) gate.style.display = 'none';
-  if (home) { home.style.display = 'block'; home.classList.add('active'); }
-  // Set a dummy key so app.js thinks user is authenticated
-  localStorage.setItem('nettly_access_key', 'NETTLY-TEST-BYPASS-0000');
-  localStorage.setItem('nettly_key_valid', 'true');
-});
-</script>
 </body>
 </html>
