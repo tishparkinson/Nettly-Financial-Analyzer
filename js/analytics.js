@@ -33,7 +33,7 @@ export function averageNeedsSpending(transactions, days = 90) {
   const needs = transactions.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (tx.isReimbursement) return false;
-    if (tx.category === "Safety Net Contribution" || tx.category === "Savings") return false;
+    if (tx.category === "Safety Net Contribution" || tx.category === "Savings" || tx.category === "Transfer from Savings") return false;
     return tx.needWant === "need" || isNeedCategory(tx.category);
   });
   const inWindow = needs.filter((tx) => new Date(tx.date) >= cutoff);
@@ -55,7 +55,7 @@ export function needsVsWants(transactions, days = 90) {
   for (const tx of transactions) {
     if (tx.amount >= 0) continue;
     if (new Date(tx.date) < cutoff) continue;
-    if (tx.category === "Safety Net Contribution") continue;
+    if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") continue;
     const abs = Math.abs(tx.amount);
     if (tx.needWant === "need") needs += abs;
     else wants += abs;
