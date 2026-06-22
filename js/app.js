@@ -585,22 +585,47 @@ document.addEventListener("change", (e) => {
 });
 
 
+// Budget guidelines (% of monthly take-home, soft ceiling)
+const BUDGET_GUIDELINES = {
+  "Housing": { aim: 30, note: "Aim to keep housing under 30% of take-home." },
+  "Transportation": { aim: 15, note: "Most budgets target transportation under 15% of take-home." },
+  "Groceries": { aim: 12, note: "A common grocery target is under 12% of take-home." },
+  "Dining Out": { aim: 8, note: "Dining out tends to add up — many households aim for under 8%." },
+  "Fast Food": { aim: 5, note: "Fast food under 5% of take-home keeps it manageable." },
+  "Coffee & Convenience": { aim: 4, note: "Coffee and convenience stops can sneak up — under 4% is a common target." },
+  "Utilities": { aim: 8, note: "Utilities typically run 5–8% of take-home." },
+  "Insurance": { aim: 20, note: "Insurance (all types) often lands between 10–20% of take-home." },
+  "Healthcare": { aim: 8, note: "Healthcare costs vary widely — many budgets target under 8%." },
+  "Subscriptions": { aim: 5, note: "Subscriptions are easy to accumulate — under 5% is a reasonable cap." },
+  "Personal Care": { aim: 5, note: "Personal care typically runs 3–5% of take-home." },
+  "Charity & Donations": { aim: 10, note: "Many aim to give 5–10% — whatever fits your values and situation." },
+  "Religious Contribution": { aim: 10, note: "Tithing and religious giving are deeply personal — this is just for awareness." },
+  "ATM & Bank Fees": { aim: 1, note: "Bank fees ideally stay under 1% of take-home — most can be avoided entirely." },
+  "Gifts": { aim: 5, note: "Gift spending often spikes seasonally — under 5% annually is a common guideline." },
+};
+
 // Needs vs Wants drill-down
 document.addEventListener("click", (e) => {
   const btn = e.target.closest(".nw-toggle");
   if (!btn) return;
-  const type = btn.dataset.nw; // "need" or "want" (matches tx.needWant)
+  const type = btn.dataset.nw; // "need" or "want"
   const txs = getFilteredTransactions();
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - 90);
+
+  // Sum income over the same 90-day window for % calculations
+  const monthlyIncome = txs
+    .filter((tx) => tx.amount > 0 && tx.category === "Income" && new Date(tx.date) >= cutoff)
+    .reduce((s, tx) => s + tx.amount, 0) / 3; // 90 days = ~3 months
+
   const filtered = txs.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (new Date(tx.date) < cutoff) return false;
     if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") return false;
-    return tx.needWant === type || (type === 'need' && tx.needWant === 'needs') || (type === 'want' && tx.needWant === 'wants');
+    return tx.needWant === type;
   });
 
-  // Top categories
+  // Aggregate by category and merchant
   const byCat = new Map();
   const byMerchant = new Map();
   for (const tx of filtered) {
@@ -609,17 +634,49 @@ document.addEventListener("click", (e) => {
     byCat.set(cat, (byCat.get(cat) || 0) + Math.abs(tx.amount));
     byMerchant.set(mer, (byMerchant.get(mer) || 0) + Math.abs(tx.amount));
   }
-  const topCats = [...byCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
-  const topMerchants = [...byMerchant.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+  const topCats = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+  const topMerchants = [...byMerchant.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
+  const totalSpend = topCats.reduce((s, [, v]) => s + v, 0);
+  const maxCatAmt = topCats[0]?.[1] || 1;
+  const label = type === "need" ? "Needs" : "Wants";
+
+  // Build category bar chart rows with optional income % flag
+  function catRow(cat, amt) {
+    const barPct = Math.round((amt / maxCatAmt) * 100);
+    const spendPct = totalSpend > 0 ? Math.round((amt / totalSpend) * 100) : 0;
+    const guideline = BUDGET_GUIDELINES[cat];
+    const monthlyAmt = amt / 3;
+    const incomePct = monthlyIncome > 0 ? Math.round((monthlyAmt / monthlyIncome) * 100) : null;
+    const overBudget = guideline && incomePct != null && incomePct > guideline.aim;
+
+    return `<div style="margin:0.5rem 0;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
+        <span style="font-size:0.88rem;font-weight:600;color:var(--navy);">${escapeHtml(cat)}</span>
+        <span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">${fmtMoney(amt)} · ${spendPct}% of ${label.toLowerCase()}${incomePct != null ? ` · ${incomePct}% of income` : ""}</span>
+      </div>
+      <div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">
+        <div style="background:${overBudget ? "#e8a028" : "var(--teal)"};width:${barPct}%;height:8px;border-radius:999px;transition:width 0.3s;"></div>
+      </div>
+      ${overBudget ? `<p style="font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;">${escapeHtml(guideline.note)} You're currently at ${incomePct}%.</p>` : ""}
+    </div>`;
+  }
 
   const detail = document.getElementById("nw-detail");
-  const label = type === "needs" ? "Needs" : "Wants";
   detail.innerHTML = `
-    <div class="nw-breakdown">
-      <h4 style="margin:0.75rem 0 0.4rem;color:var(--navy);">${label} — Top Categories (90 days)</h4>
-      ${topCats.map(([cat, amt]) => `<div class="bill-row"><span>${escapeHtml(cat)}</span><span>${fmtMoney(amt)}</span></div>`).join("") || "<p class='small'>None.</p>"}
-      <h4 style="margin:0.75rem 0 0.4rem;color:var(--navy);">${label} — Top Merchants</h4>
-      ${topMerchants.map(([mer, amt]) => `<div class="bill-row"><span>${escapeHtml(mer)}</span><span>${fmtMoney(amt)}</span></div>`).join("") || "<p class='small'>None.</p>"}
+    <div style="margin-top:0.75rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+        <strong style="color:var(--navy);">${label} Breakdown (90 days)</strong>
+        <span class="small">${fmtMoney(totalSpend)} total</span>
+      </div>
+      ${topCats.map(([cat, amt]) => catRow(cat, amt)).join("") || "<p class='small'>No transactions found.</p>"}
+      <h4 style="margin:1rem 0 0.4rem;color:var(--navy);">Top Merchants — ${label}</h4>
+      ${topMerchants.map(([mer, amt]) => `
+        <div style="display:flex;justify-content:space-between;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.88rem;">
+          <span>${escapeHtml(mer)}</span>
+          <span style="color:var(--muted);">${fmtMoney(amt)}</span>
+        </div>`).join("") || "<p class='small'>None.</p>"}
+      ${monthlyIncome > 0 ? `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Income estimate: ${fmtMoney(monthlyIncome)}/mo (90-day average). Percentages are monthly averages.</p>` : `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Add income transactions to see % of income breakdowns and budget guidance.</p>`}
     </div>`;
 });
 
