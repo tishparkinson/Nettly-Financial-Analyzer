@@ -65,6 +65,7 @@
     <section id="screen-upload" class="screen">
       <h2 style="margin:0;color:var(--navy);">Add transactions</h2>
       <p class="small">Paste from your bank or card. Nettly figures out the format.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Start with <strong>1–3 months</strong> of transactions for the best experience. More than 3 months can make category review overwhelming.</p>
 
       <div class="card">
         <label>Account nickname</label>
@@ -128,7 +129,7 @@
           <option value="cash">Cash (manual tracking)</option>
         </select>
         <label>Account label</label>
-        <input id="sn-label" placeholder="Emergency Savings">
+        <input id="sn-label" placeholder="Emergency Savings" list="sn-account-hints" autocomplete="off"><datalist id="sn-account-hints"></datalist>
         <label id="sn-balance-label">Current balance ($)</label>
         <input id="sn-balance" type="number" min="0" step="0.01" placeholder="0">
         <div id="sn-partial-wrap" class="hidden">
