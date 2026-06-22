@@ -1,7 +1,16 @@
 const DATE_PATTERNS = [
   { re: /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/, parse: (m) => parseMDY(m[1], m[2], m[3]) },
   { re: /^(\d{4})-(\d{2})-(\d{2})\b/, parse: (m) => new Date(+m[1], +m[2] - 1, +m[3]) },
-  { re: /^(\d{1,2})-(\d{1,2})-(\d{2,4})\b/, parse: (m) => parseMDY(m[1], m[2], m[3]) }
+  { re: /^(\d{1,2})-(\d{1,2})-(\d{2,4})\b/, parse: (m) => parseMDY(m[1], m[2], m[3]) },
+  // Month-name formats: "Jan 2", "January 2", "Jan 2 2025", "January 02, 2025"
+  { re: /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:[,\s]+(\d{4}))?\b/i,
+    parse: (m) => {
+      const months = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+      const mo = months[m[1].slice(0,3).toLowerCase()];
+      const yr = m[3] ? +m[3] : new Date().getFullYear();
+      return new Date(yr, mo, +m[2]);
+    }
+  }
 ];
 
 function parseMDY(m, d, y) {
@@ -58,6 +67,65 @@ export function parseTransactions(text, accountNickname, accountType) {
     .filter((l) => !isHeaderLine(l));
 
   const results = [];
+
+  // ── Multi-line block detection ────────────────────────────────────────────
+  // Handles formats where each transaction spans multiple lines, e.g.:
+  //   MERCHANT DESCRIPTION       ← line 0: description (no date, no leading $)
+  //   Jan 2                      ← line 1: standalone date
+  //   $11.32                     ← line 2: amount (leading $)
+  //   $58.08                     ← line 3: running balance (skip)
+  //
+  // Detection: if >50% of lines are standalone dates or standalone $ amounts,
+  // treat the whole paste as multi-line blocks rather than single-line rows.
+  const isStandaloneDate = (l) => extractDateFromLine(l).date !== null && l.length < 30;
+  const isStandaloneDollar = (l) => /^\$[\d,]+\.\d{2}$/.test(l);
+  const isDescriptionLine = (l) => !isStandaloneDate(l) && !isStandaloneDollar(l) && !/^\d+\.\d{2}$/.test(l);
+
+  const standaloneDateCount = lines.filter(isStandaloneDate).length;
+  const standaloneDollarCount = lines.filter(isStandaloneDollar).length;
+
+  if (standaloneDateCount >= 2 && standaloneDollarCount >= 2 &&
+      (standaloneDateCount + standaloneDollarCount) / lines.length > 0.35) {
+    // Parse as multi-line blocks: group lines into [description, date, amount, balance?]
+    let i = 0;
+    while (i < lines.length) {
+      // Find a description line (no date, no leading $)
+      if (!isDescriptionLine(lines[i])) { i++; continue; }
+      const description = lines[i];
+      let date = null;
+      let amount = null;
+      let j = i + 1;
+
+      // Consume following lines that belong to this block
+      // A new block starts when we see another description line after we have date+amount
+      while (j < lines.length) {
+        const l = lines[j];
+        if (!date && isStandaloneDate(l)) {
+          date = extractDateFromLine(l).date;
+          j++; continue;
+        }
+        if (date && amount == null && (isStandaloneDollar(l) || /^\d+\.\d{2}$/.test(l))) {
+          amount = parseAmount(l);
+          j++; continue;
+        }
+        // Second dollar line = running balance, skip it
+        if (date && amount != null && (isStandaloneDollar(l) || /^\d+\.\d{2}$/.test(l))) {
+          j++; break;
+        }
+        // Hit something that looks like a new description — stop
+        if (isDescriptionLine(l) && date && amount != null) break;
+        if (isDescriptionLine(l) && !date && !amount) { j++; continue; }
+        j++;
+      }
+
+      if (date && amount != null && description.length > 1) {
+        results.push(makeTx(date, description, -Math.abs(amount), accountNickname, accountType));
+      }
+      i = j;
+    }
+    return results;
+  }
+  // ── End multi-line block detection ───────────────────────────────────────
 
   for (const line of lines) {
     if (line.includes("\t")) {
