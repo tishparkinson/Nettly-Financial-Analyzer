@@ -25,6 +25,7 @@ export const CATEGORIES = [
   "Safety Net Contribution",
   "One-Time Income",
   "Transfer from Savings",
+  "ATM & Bank Fees",
   "Religious Contribution",
   "Charity & Donations",
   "Miscellaneous",
@@ -87,6 +88,7 @@ export const MERCHANT_RULES = [
   { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
   { re: /transfer to savings|safety net|emergency fund/i, cat: "Safety Net Contribution", conf: 0.8 },
   { re: /transfer from savings|savings transfer|xfer from sav|from savings/i, cat: "Transfer from Savings", conf: 0.95 },
+  { re: /atm fee|non-network atm|out-of-network atm|foreign atm|atm surcharge|cash machine fee|atm withdrawal fee|bank fee|monthly fee|service fee|maintenance fee|overdraft fee|nsf fee|insufficient fund/i, cat: "ATM & Bank Fees", conf: 0.95 },
   { re: /tithe|tithing|church|diocese|parish|synagogue|mosque|temple|lds|latter.day|ward donation|fast offering|missionary fund/i, cat: "Religious Contribution", conf: 0.93 },
   { re: /donation|donate|charity|charitable|goodwill|salvation army|red cross|habitat for humanity|united way|gofundme|npo|nonprofit|non-profit/i, cat: "Charity & Donations", conf: 0.9 },
   { re: /capital one|credit one|payment thank you|card payment/i, cat: "Miscellaneous", conf: 0.6 }
