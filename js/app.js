@@ -175,6 +175,22 @@ document.getElementById("link-home-footer").addEventListener("click", (e) => {
 // --- Upload ---
 document.getElementById("btn-upload-back").addEventListener("click", () => show("home"));
 
+document.getElementById("btn-upload-start-over").addEventListener("click", () => {
+  if (!confirm("Clear everything and start fresh? This removes all accounts and transactions you\'ve added.")) return;
+  const { couplesMode, partners } = state;
+  state = defaultState();
+  state.couplesMode = couplesMode;
+  state.partners = { ...partners };
+  pendingPaste = [];
+  overlapFlag = false;
+  saveState(state);
+  document.getElementById("acct-nickname").value = "";
+  document.getElementById("paste-tx").value = "";
+  document.getElementById("pending-accounts").classList.add("hidden");
+  document.getElementById("account-list").innerHTML = "";
+  show("home");
+});
+
 document.getElementById("btn-add-account").addEventListener("click", () => {
   const nickname = document.getElementById("acct-nickname").value.trim();
   const accountType = document.getElementById("acct-type").value;
