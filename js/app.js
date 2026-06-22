@@ -380,14 +380,24 @@ function renderTags(txs) {
   const recent = txs
     .filter((tx) => tx.amount < 0)
     .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 25);
+    .slice(0, 50);
+
+  const applyBtnHtml = `<div style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+    <button type="button" class="btn btn-secondary" id="btn-apply-tag-checked" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;"
+      ${activeTag ? "" : "disabled"}>Apply "${escapeHtml(activeTag || "")}" to checked</button>
+    <button type="button" class="btn btn-ghost" id="btn-check-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Check all</button>
+    <button type="button" class="btn btn-ghost" id="btn-uncheck-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Uncheck all</button>
+  </div>`;
 
   document.getElementById("tx-tag-list").innerHTML = recent.length
-    ? recent.map((tx) => {
-      const tagStr = (tx.tags || []).length ? (tx.tags || []).map((t) => `#${t}`).join(" ") : "";
-      return `<div class="tx-tag-row" data-tx-id="${escapeAttr(tx.id)}" role="button" tabindex="0">
-        <div>${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0, 50))}</div>
-        <div class="small">${fmtMoney(Math.abs(tx.amount))} ${tagStr ? `· ${escapeHtml(tagStr)}` : ""}</div>
+    ? applyBtnHtml + recent.map((tx) => {
+      const tagStr = (tx.tags || []).length ? (tx.tags || []).map((t) => `#${escapeHtml(t)}`).join(" ") : "";
+      return `<div class="tx-tag-row" style="display:flex;align-items:flex-start;gap:0.5rem;">
+        <input type="checkbox" class="tx-tag-check" data-tx-id="${escapeAttr(tx.id)}" style="margin-top:0.25rem;flex-shrink:0;">
+        <div style="flex:1;cursor:pointer;" data-tx-id="${escapeAttr(tx.id)}">
+          <div>${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0, 50))}</div>
+          <div class="small">${fmtMoney(Math.abs(tx.amount))} ${tagStr ? `· ${tagStr}` : ""}</div>
+        </div>
       </div>`;
     }).join("")
     : "<p class=\"small\">No spending rows to tag yet.</p>";
@@ -423,9 +433,37 @@ document.getElementById("custom-tag-input").addEventListener("keydown", (e) => {
 });
 
 document.getElementById("tx-tag-list").addEventListener("click", (e) => {
-  const row = e.target.closest("[data-tx-id]");
-  if (!row || !activeTag) return;
-  toggleTagOnTx(row.dataset.txId);
+  // Apply button
+  if (e.target.id === "btn-apply-tag-checked") {
+    if (!activeTag) return;
+    document.querySelectorAll(".tx-tag-check:checked").forEach((cb) => {
+      const txId = cb.dataset.txId;
+      const tx = state.transactions.find((t) => t.id === txId);
+      if (tx && !(tx.tags || []).includes(activeTag)) {
+        state.transactions = state.transactions.map((t) =>
+          t.id === txId ? { ...t, tags: [...(t.tags || []), activeTag] } : t
+        );
+      }
+    });
+    saveState(state);
+    renderTags(getFilteredTransactions());
+    return;
+  }
+  // Check all / uncheck all
+  if (e.target.id === "btn-check-all-tags") {
+    document.querySelectorAll(".tx-tag-check").forEach((cb) => cb.checked = true);
+    return;
+  }
+  if (e.target.id === "btn-uncheck-all-tags") {
+    document.querySelectorAll(".tx-tag-check").forEach((cb) => cb.checked = false);
+    return;
+  }
+  // Click on row text = toggle checkbox
+  const rowText = e.target.closest("[data-tx-id]:not(input)");
+  if (rowText && rowText.tagName !== "INPUT") {
+    const cb = rowText.closest(".tx-tag-row")?.querySelector(".tx-tag-check");
+    if (cb) cb.checked = !cb.checked;
+  }
 });
 
 function toggleTagOnTx(txId) {
@@ -496,8 +534,11 @@ function renderDashboard() {
 
   document.getElementById("bar-needs").style.width = `${nw.needsPct}%`;
   document.getElementById("bar-wants").style.width = `${nw.wantsPct}%`;
-  document.getElementById("needs-amt").textContent = `Needs ${fmtMoney(nw.needs)} (${nw.needsPct}%)`;
-  document.getElementById("wants-amt").textContent = `Wants ${fmtMoney(nw.wants)} (${nw.wantsPct}%)`;
+  const needsAmtEl = document.getElementById("needs-amt");
+  const wantsAmtEl = document.getElementById("wants-amt");
+  needsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="needs">Needs ${fmtMoney(nw.needs)} (${nw.needsPct}%) ▾</button>`;
+  wantsAmtEl.innerHTML = `<button type="button" class="nw-toggle" data-nw="wants">Wants ${fmtMoney(nw.wants)} (${nw.wantsPct}%) ▾</button>`;
+  document.getElementById("nw-detail").innerHTML = "";
 
   document.getElementById("subs-summary").textContent =
     subs.count
@@ -507,8 +548,66 @@ function renderDashboard() {
   document.getElementById("insights-list").innerHTML = insights.map((i) => `<li>${escapeHtml(i)}</li>`).join("") ||
     "<li>Upload more history to surface patterns.</li>";
 
+  renderCategoryReview(txs);
   renderTags(txs);
 }
+
+
+// Category fix in dashboard
+document.addEventListener("change", (e) => {
+  const sel = e.target.closest(".cat-fix-select");
+  if (!sel) return;
+  const txId = sel.dataset.txId;
+  const merchant = sel.dataset.merchant;
+  const newCat = sel.value;
+  // Update all transactions with same merchant
+  state.transactions = state.transactions.map((tx) => {
+    if (merchant && tx.merchant === merchant) return { ...tx, category: newCat, confidence: 1 };
+    if (tx.id === txId) return { ...tx, category: newCat, confidence: 1 };
+    return tx;
+  });
+  if (merchant) state.merchantMemory[merchant] = newCat;
+  saveState(state);
+});
+
+
+// Needs vs Wants drill-down
+document.addEventListener("click", (e) => {
+  const btn = e.target.closest(".nw-toggle");
+  if (!btn) return;
+  const type = btn.dataset.nw; // "needs" or "wants"
+  const txs = getFilteredTransactions();
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - 90);
+  const filtered = txs.filter((tx) => {
+    if (tx.amount >= 0) return false;
+    if (new Date(tx.date) < cutoff) return false;
+    if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") return false;
+    return tx.needWant === type;
+  });
+
+  // Top categories
+  const byCat = new Map();
+  const byMerchant = new Map();
+  for (const tx of filtered) {
+    const cat = tx.category || "Unknown";
+    const mer = tx.merchant || tx.description.slice(0, 30);
+    byCat.set(cat, (byCat.get(cat) || 0) + Math.abs(tx.amount));
+    byMerchant.set(mer, (byMerchant.get(mer) || 0) + Math.abs(tx.amount));
+  }
+  const topCats = [...byCat.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const topMerchants = [...byMerchant.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+  const detail = document.getElementById("nw-detail");
+  const label = type === "needs" ? "Needs" : "Wants";
+  detail.innerHTML = `
+    <div class="nw-breakdown">
+      <h4 style="margin:0.75rem 0 0.4rem;color:var(--navy);">${label} — Top Categories (90 days)</h4>
+      ${topCats.map(([cat, amt]) => `<div class="bill-row"><span>${escapeHtml(cat)}</span><span>${fmtMoney(amt)}</span></div>`).join("") || "<p class='small'>None.</p>"}
+      <h4 style="margin:0.75rem 0 0.4rem;color:var(--navy);">${label} — Top Merchants</h4>
+      ${topMerchants.map(([mer, amt]) => `<div class="bill-row"><span>${escapeHtml(mer)}</span><span>${fmtMoney(amt)}</span></div>`).join("") || "<p class='small'>None.</p>"}
+    </div>`;
+});
 
 document.getElementById("btn-download-snapshot").addEventListener("click", () => downloadSnapshot(state));
 
@@ -535,6 +634,26 @@ To continue where things left off later, save the most recent Snapshot before re
     show("home");
   }
 });
+
+
+function renderCategoryReview(txs) {
+  const el = document.getElementById("cat-review-list");
+  if (!el) return;
+  const recent = txs
+    .filter((tx) => tx.amount < 0)
+    .sort((a, b) => b.date.localeCompare(a.date))
+    .slice(0, 40);
+  el.innerHTML = recent.map((tx) => `
+    <div class="tx-tag-row" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+      <div style="flex:1;min-width:0;">
+        <div style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0,40))}</div>
+        <div class="small">${fmtMoney(Math.abs(tx.amount))}</div>
+      </div>
+      <select class="cat-fix-select" data-tx-id="${escapeAttr(tx.id)}" data-merchant="${escapeAttr(tx.merchant||'')}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:auto;flex-shrink:0;">
+        ${CATEGORIES.map((cat) => `<option${cat === tx.category ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}
+      </select>
+    </div>`).join("");
+}
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
