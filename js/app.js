@@ -7,6 +7,7 @@ import {
   computeMonthsCovered,
   needsVsWants,
   detectRecurring,
+  detectRecurring45,
   subscriptionSummary,
   stabilityLabel,
   simpleInsights,
@@ -36,6 +37,7 @@ const screens = {
   home: document.getElementById("screen-home"),
   upload: document.getElementById("screen-upload"),
   merchants: document.getElementById("screen-merchants"),
+  review: document.getElementById("screen-review"),
   safety: document.getElementById("screen-safety"),
   dashboard: document.getElementById("screen-dashboard")
 };
@@ -283,6 +285,17 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   let categorized = applyCategories(added, state.merchantMemory, state.categoryNeedWant);
   state.transactions = state.transactions.concat(categorized);
 
+  // Auto-detect recurring transactions before review
+  const recurringMap = detectRecurring45(state.transactions);
+  state.transactions = state.transactions.map((tx) => {
+    const rec = recurringMap.get(tx.id);
+    if (rec && !tx.isRecurring) {
+      return { ...tx, isRecurring: true, recurringInterval: rec.interval,
+               recurringLastDate: rec.lastDate, recurringLastAmt: rec.lastAmt };
+    }
+    return tx;
+  });
+
   state.streaks = updateStreaks(state, true);
   pendingPaste = [];
   saveState(state);
@@ -345,11 +358,244 @@ document.getElementById("btn-merchants-done").addEventListener("click", () => {
     });
   });
   saveState(state);
+  startWeeklyReview();
+});
+
+
+// ═══════════════════════════════════════════════════════
+// WEEK-BY-WEEK TRANSACTION REVIEW
+// ═══════════════════════════════════════════════════════
+let reviewWeeks = [];      // [{label, txIds}] sorted newest→oldest
+let reviewWeekIdx = 0;     // current week index
+let reviewAccountList = []; // accounts to cycle through
+let reviewAcctIdx = 0;     // current account index
+
+function startWeeklyReview() {
+  // Get all accounts that have transactions
+  const acctNames = [...new Set(state.transactions.map((tx) => tx.account))].filter(Boolean);
+  reviewAccountList = acctNames;
+  reviewAcctIdx = 0;
+  startReviewForAccount();
+}
+
+function startReviewForAccount() {
+  const acct = reviewAccountList[reviewAcctIdx];
+  const acctTxs = state.transactions
+    .filter((tx) => tx.amount < 0 && tx.account === acct)
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  if (!acctTxs.length) {
+    advanceReviewAccount();
+    return;
+  }
+
+  // Group into weeks (7-day buckets from most recent)
+  const weeks = [];
+  let weekStart = null;
+  let weekTxIds = [];
+  for (const tx of acctTxs) {
+    const d = new Date(tx.date);
+    if (!weekStart) weekStart = d;
+    const diffDays = (weekStart - d) / 86400000;
+    if (diffDays > 7) {
+      const label = weekLabel(weekStart, new Date(acctTxs[weekTxIds.length - 1]?.date || tx.date));
+      weeks.push({ label, txIds: [...weekTxIds] });
+      weekTxIds = [];
+      weekStart = d;
+    }
+    weekTxIds.push(tx.id);
+  }
+  if (weekTxIds.length) {
+    weeks.push({ label: weekLabel(weekStart, new Date(acctTxs[acctTxs.length - 1].date)), txIds: weekTxIds });
+  }
+
+  reviewWeeks = weeks;
+  reviewWeekIdx = 0;
+  renderReviewWeek(acct);
+  show("review");
+}
+
+function weekLabel(newest, oldest) {
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${fmt(oldest)} – ${fmt(newest)}`;
+}
+
+function advanceReviewAccount() {
+  reviewAcctIdx++;
+  if (reviewAcctIdx < reviewAccountList.length) {
+    startReviewForAccount();
+  } else {
+    // All accounts reviewed — go to safety net
+    show("safety");
+    populateSafetyNetAccountList();
+    renderSafetySummary();
+  }
+}
+
+function renderReviewWeek(acct) {
+  const week = reviewWeeks[reviewWeekIdx];
+  if (!week) { advanceReviewAccount(); return; }
+
+  const totalWeeks = reviewWeeks.length;
+  const totalAccts = reviewAccountList.length;
+  const pct = Math.round(
+    ((reviewAcctIdx * totalWeeks + reviewWeekIdx) / (totalAccts * totalWeeks)) * 100
+  );
+
+  document.getElementById("review-heading").textContent =
+    `Review — ${acct}`;
+  document.getElementById("review-subhead").textContent =
+    `Week: ${week.label} · ${week.txIds.length} transaction${week.txIds.length !== 1 ? "s" : ""}` +
+    (totalAccts > 1 ? ` · Account ${reviewAcctIdx + 1} of ${totalAccts}` : "");
+  document.getElementById("review-progress").textContent =
+    `Week ${reviewWeekIdx + 1} of ${totalWeeks}`;
+  document.getElementById("review-progress-bar").style.width = `${pct}%`;
+
+  // Prev/Next visibility
+  document.getElementById("btn-review-prev").style.visibility =
+    reviewWeekIdx === 0 ? "hidden" : "visible";
+  document.getElementById("btn-review-next").textContent =
+    reviewWeekIdx < totalWeeks - 1
+      ? "Next Week →"
+      : reviewAcctIdx < reviewAccountList.length - 1
+        ? `Next Account →`
+        : "Finish →";
+
+  // Build transaction rows
+  const txs = week.txIds.map((id) => state.transactions.find((t) => t.id === id)).filter(Boolean);
+  const container = document.getElementById("review-tx-list");
+
+  container.innerHTML = txs.map((tx) => `
+    <div class="review-tx-card" data-tx-id="${escapeAttr(tx.id)}" style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:0.85rem;margin:0.5rem 0;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.4rem;">
+        <span style="font-size:0.82rem;color:var(--muted);">${escapeHtml(tx.date)}</span>
+        <strong style="color:var(--navy);">${fmtMoney(Math.abs(tx.amount))}</strong>
+      </div>
+      <div style="font-size:0.9rem;margin-bottom:0.6rem;word-break:break-word;">${escapeHtml(tx.description.slice(0, 60))}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.5rem;">
+        <div>
+          <label style="font-size:0.75rem;margin-bottom:0.2rem;">Category</label>
+          <select class="review-cat" data-tx-id="${escapeAttr(tx.id)}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:100%;">
+            ${CATEGORIES.map((cat) => `<option${cat === tx.category ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}
+          </select>
+        </div>
+        <div>
+          <label style="font-size:0.75rem;margin-bottom:0.2rem;">Need or Want?</label>
+          <select class="review-nw" data-tx-id="${escapeAttr(tx.id)}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:100%;">
+            <option value="need"${tx.needWant === "need" ? " selected" : ""}>Need</option>
+            <option value="want"${tx.needWant === "want" ? " selected" : ""}>Want</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label style="font-size:0.75rem;margin-bottom:0.3rem;">Tags (optional)</label>
+        <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem;">
+          ${[...DEFAULT_TAGS, ...(state.customTags || [])].map((tag) =>
+            `<button type="button" class="tag-chip review-tag-chip${(tx.tags||[]).includes(tag) ? " active" : ""}"
+              data-tx-id="${escapeAttr(tx.id)}" data-tag="${escapeAttr(tag)}"
+              style="font-size:0.75rem;padding:0.2rem 0.55rem;">${escapeHtml(tag)}</button>`
+          ).join("")}
+        </div>
+      </div>
+
+      <div style="margin-top:0.5rem;">
+        <label style="font-size:0.75rem;color:var(--muted);display:block;margin-bottom:0.3rem;">Spending type</label>
+        <div style="display:flex;gap:0.3rem;flex-wrap:wrap;">
+          ${["regular","recurring","one-time"].map((type) => {
+            const active = type === "recurring" ? tx.isRecurring && !tx.isOneTime
+                         : type === "one-time"  ? tx.isOneTime
+                         : !tx.isRecurring && !tx.isOneTime;
+            const labels = { regular: "Regular", recurring: "🔁 Recurring", "one-time": "1× One-time" };
+            return `<button type="button" class="review-type-btn${active ? " active" : ""}"
+              data-tx-id="${escapeAttr(tx.id)}" data-type="${type}"
+              style="font-size:0.75rem;padding:0.25rem 0.6rem;border-radius:999px;border:1px solid ${active ? "var(--teal)" : "var(--border)"};background:${active ? "var(--teal-soft)" : "#fff"};color:${active ? "var(--navy)" : "var(--muted)"};cursor:pointer;">${labels[type]}</button>`;
+          }).join("")}
+          ${tx.isRecurring && tx.recurringLastDate
+            ? `<span title="We saw $${(tx.recurringLastAmt||0).toFixed(2)} from this merchant on ${tx.recurringLastDate} — auto-flagged as recurring"
+                style="display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1.5px solid var(--teal);color:var(--teal);font-size:9px;font-weight:700;cursor:help;margin-left:2px;" tabindex="0">i</span>`
+            : ""}
+        </div>
+        <p style="font-size:0.72rem;color:var(--muted);margin:0.25rem 0 0;line-height:1.3;">
+          <em>Recurring</em> = fixed monthly bill. <em>One-time</em> = excluded from your monthly spending average.
+        </p>
+      </div>
+    </div>`).join("");
+
+  // Wire category change → save immediately
+  container.querySelectorAll(".review-cat").forEach((sel) => {
+    sel.addEventListener("change", () => saveReviewTx(sel.dataset.txId, sel.value, null, null, null, null));
+  });
+  container.querySelectorAll(".review-nw").forEach((sel) => {
+    sel.addEventListener("change", () => saveReviewTx(sel.dataset.txId, null, sel.value, null, null, null));
+  });
+  container.querySelectorAll(".review-tag-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      btn.classList.toggle("active");
+      const tags = [...container.querySelectorAll(`.review-tag-chip.active[data-tx-id="${btn.dataset.txId}"]`)]
+        .map((b) => b.dataset.tag);
+      saveReviewTx(btn.dataset.txId, null, null, tags, null, null);
+    });
+  });
+  container.querySelectorAll(".review-type-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const type = btn.dataset.type;
+      const txId = btn.dataset.txId;
+      const isRecurring = type === "recurring";
+      const isOneTime   = type === "one-time";
+      saveReviewTx(txId, null, null, null, isRecurring, isOneTime);
+      // Update button styles immediately
+      container.querySelectorAll(`.review-type-btn[data-tx-id="${txId}"]`).forEach((b) => {
+        const active = b.dataset.type === type;
+        b.classList.toggle("active", active);
+        b.style.borderColor = active ? "var(--teal)" : "var(--border)";
+        b.style.background  = active ? "var(--teal-soft)" : "#fff";
+        b.style.color       = active ? "var(--navy)" : "var(--muted)";
+      });
+    });
+  });
+}
+
+function saveReviewTx(txId, cat, nw, tags, isRecurring, isOneTime) {
+  state.transactions = state.transactions.map((tx) => {
+    if (tx.id !== txId) return tx;
+    const updated = { ...tx };
+    if (cat !== null) { updated.category = cat; updated.confidence = 1; }
+    if (nw !== null) updated.needWant = nw;
+    if (tags !== null) updated.tags = tags;
+    if (isRecurring !== null && isRecurring !== undefined) updated.isRecurring = isRecurring;
+    if (isOneTime !== null && isOneTime !== undefined) updated.isOneTime = isOneTime;
+    return updated;
+  });
+  saveState(state);
+}
+
+document.getElementById("btn-review-next").addEventListener("click", () => {
+  // Save any pending changes (already saved on change), advance week
+  if (reviewWeekIdx < reviewWeeks.length - 1) {
+    reviewWeekIdx++;
+    renderReviewWeek(reviewAccountList[reviewAcctIdx]);
+  } else {
+    advanceReviewAccount();
+  }
+});
+
+document.getElementById("btn-review-prev").addEventListener("click", () => {
+  if (reviewWeekIdx > 0) {
+    reviewWeekIdx--;
+    renderReviewWeek(reviewAccountList[reviewAcctIdx]);
+  }
+});
+
+document.getElementById("btn-review-done").addEventListener("click", () => {
+  saveState(state);
   show("safety");
   populateSafetyNetAccountList();
   renderSafetySummary();
 });
 
+// ═══════════════════════════════════════════════════════
 // --- Safety Net ---
 const snType = document.getElementById("sn-type");
 snType.addEventListener("change", () => {
@@ -693,7 +939,7 @@ document.addEventListener("click", (e) => {
   const filtered = txs.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (new Date(tx.date) < cutoff) return false;
-    const EXCLUDE = new Set(["Safety Net Contribution", "Transfer from Savings", "Savings", "Income", "Interest Income", "One-Time Income", "Transfer", "Unknown"]);
+    const EXCLUDE = new Set(["Safety Net Contribution", "Transfer from Savings", "Transfer from Checking", "Savings", "Income", "Interest Income", "One-Time Income", "Transfer", "Unknown"]);
     if (EXCLUDE.has(tx.category)) return false;
     if (tx.amount >= 0) return false; // deposits/credits excluded
     return tx.needWant === type;
@@ -724,16 +970,27 @@ document.addEventListener("click", (e) => {
     const incomePct = monthlyIncome > 0 ? Math.round((monthlyAmt / monthlyIncome) * 100) : null;
     const overBudget = guideline && incomePct != null && incomePct > guideline.aim;
 
-    return `<div style="margin:0.5rem 0;">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
-        <span style="font-size:0.88rem;font-weight:600;color:var(--navy);">${escapeHtml(cat)}</span>
-        <span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">${fmtMoney(amt)} · ${spendPct}% of ${label.toLowerCase()}${incomePct != null ? ` · ${incomePct}% of income` : ""}</span>
-      </div>
-      <div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">
-        <div style="background:${overBudget ? "#e8a028" : "var(--teal)"};width:${barPct}%;height:8px;border-radius:999px;transition:width 0.3s;"></div>
-      </div>
-      ${overBudget ? `<p style="font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;">${escapeHtml(guideline.note)} You're currently at ${incomePct}%.</p>` : ""}
-    </div>`;
+    const tooltipText = guideline
+      ? (incomePct != null
+          ? `${cat}: you're at ${incomePct}% of monthly income. Guideline: aim for ${guideline.aim}% or less. ${guideline.note}`
+          : `${cat}: guideline is ${guideline.aim}% or less of income. Add income transactions to see your %.`)
+      : null;
+
+    const iconColor = overBudget ? "#c0392b" : "var(--muted)";
+    const iconHtml = tooltipText
+      ? `<span title="${tooltipText.replace(/"/g, "&quot;")}" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1.5px solid ${iconColor};color:${iconColor};font-size:9px;font-weight:700;cursor:help;flex-shrink:0;line-height:1;margin-left:4px;vertical-align:middle;">i</span>`
+      : "";
+
+    return '<div style="margin:0.5rem 0;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">' +
+        '<span style="font-size:0.88rem;font-weight:600;color:var(--navy);display:inline-flex;align-items:center;">' + escapeHtml(cat) + iconHtml + '</span>' +
+        '<span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">' + fmtMoney(amt) + ' · ' + spendPct + '%' + (incomePct != null ? ' · ' + incomePct + '% income' : '') + '</span>' +
+      '</div>' +
+      '<div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">' +
+        '<div style="background:' + (overBudget ? '#e8a028' : 'var(--teal)') + ';width:' + barPct + '%;height:8px;border-radius:999px;transition:width 0.3s;"></div>' +
+      '</div>' +
+      (overBudget && guideline ? '<p style="font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;">' + escapeHtml(guideline.note) + ' You're at ' + incomePct + '% — aim for ' + guideline.aim + '% or less.</p>' : '') +
+    '</div>';
   }
 
   const detail = document.getElementById("nw-detail");
