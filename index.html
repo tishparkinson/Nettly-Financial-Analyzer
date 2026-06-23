@@ -9,6 +9,22 @@
 </head>
 <body>
   <div class="app">
+
+    <!-- Floating snapshot button — shown after weekly review is complete -->
+    <div id="floating-save-wrap" style="display:none;position:fixed;top:0.75rem;right:0.75rem;z-index:9999;">
+      <button type="button" id="btn-floating-snapshot"
+        style="background:var(--gold);color:var(--navy);border:none;border-radius:10px;
+               padding:0.45rem 0.85rem;font-size:0.82rem;font-weight:700;cursor:pointer;
+               box-shadow:0 2px 8px rgba(0,0,0,0.18);font-family:inherit;
+               display:flex;align-items:center;gap:0.4rem;white-space:nowrap;">
+        <span id="floating-save-icon">💾</span>
+        <span id="floating-save-label">Download Snapshot</span>
+      </button>
+      <div id="floating-save-dot" style="display:none;position:absolute;top:-4px;right:-4px;
+        width:10px;height:10px;border-radius:50%;background:#e53e3e;border:2px solid #fff;"></div>
+    </div>
+
+
     <!-- GATE (subscription required) -->
     <section id="screen-gate" class="screen">
       <header class="hero">
@@ -53,7 +69,7 @@
         </div>
       </div>
       <p class="small" style="margin-top:1rem;text-align:center;">
-        🔒 <strong>Your financial data never touches our servers.</strong> It stays on your computer only — no cloud, no database, no one else can see it. The tradeoff: if you close this tab without downloading your snapshot, that work is gone. <strong>Download before you're done today.</strong>
+        🔒 <strong>Your financial data never touches our servers.</strong> It stays on your computer only — no cloud, no database, no one else can see it. The tradeoff: if you close this tab without downloading your snapshot, that work is gone. Once you've reviewed your first week of transactions, a <strong>💾 Download Snapshot</strong> button will appear in the top-right corner — keep it handy and click it before you close this window.
       </p>
     </section>
 
