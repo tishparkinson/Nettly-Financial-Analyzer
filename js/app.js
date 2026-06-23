@@ -381,6 +381,7 @@ let reviewAccountList = []; // accounts to cycle through
 let reviewAcctIdx = 0;     // current account index
 
 function startWeeklyReview() {
+  showFloatingBtn();
   // Get all accounts that have transactions
   const acctNames = [...new Set(state.transactions.map((tx) => tx.account))].filter(Boolean);
   reviewAccountList = acctNames;
@@ -675,6 +676,65 @@ function saveReviewTx(txId, cat, nw, tags, isRecurring, isOneTime) {
 });
 
 // ═══════════════════════════════════════════════════════
+
+// ── Floating snapshot button ──────────────────────────────────────────────
+let lastDownloadedState = null;
+let floatingBtnVisible = false;
+
+function showFloatingBtn() {
+  const wrap = document.getElementById("floating-save-wrap");
+  if (wrap) { wrap.style.display = "block"; floatingBtnVisible = true; }
+}
+
+function markUnsavedChanges() {
+  if (!floatingBtnVisible) return;
+  const dot = document.getElementById("floating-save-dot");
+  const label = document.getElementById("floating-save-label");
+  const icon = document.getElementById("floating-save-icon");
+  if (dot) dot.style.display = "block";
+  if (label) label.textContent = "Unsaved changes — Download";
+  if (icon) icon.textContent = "⚠️";
+}
+
+function markSaved() {
+  const dot = document.getElementById("floating-save-dot");
+  const label = document.getElementById("floating-save-label");
+  const icon = document.getElementById("floating-save-icon");
+  if (dot) dot.style.display = "none";
+  if (label) label.textContent = "Download Snapshot";
+  if (icon) icon.textContent = "💾";
+}
+
+(document.getElementById("btn-floating-snapshot") || {addEventListener:()=>{}})
+  .addEventListener("click", () => {
+    downloadSnapshot(state);
+    lastDownloadedState = JSON.stringify(state);
+    markSaved();
+  });
+
+// Poll for state changes every 15 seconds and show unsaved indicator
+setInterval(() => {
+  if (!floatingBtnVisible) return;
+  const current = JSON.stringify(state);
+  if (lastDownloadedState === null) {
+    // Never downloaded yet — show unsaved
+    markUnsavedChanges();
+  } else if (current !== lastDownloadedState) {
+    markUnsavedChanges();
+  }
+}, 15000);
+
+// Also warn before closing if unsaved changes
+window.addEventListener("beforeunload", (e) => {
+  if (!floatingBtnVisible) return;
+  const current = JSON.stringify(state);
+  if (lastDownloadedState === null || current !== lastDownloadedState) {
+    e.preventDefault();
+    e.returnValue = "You have unsaved changes. Download your snapshot before leaving.";
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────
+
 // --- Safety Net ---
 const snType = document.getElementById("sn-type");
 snType.addEventListener("change", () => {
@@ -745,6 +805,7 @@ function populateSafetyNetAccountList() {
 document.getElementById("btn-to-dashboard").addEventListener("click", () => {
   renderDashboard();
   show("dashboard");
+  showFloatingBtn();
   downloadSnapshot(state);
 });
 
