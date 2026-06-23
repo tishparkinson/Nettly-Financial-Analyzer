@@ -61,7 +61,7 @@
     <section id="screen-upload" class="screen">
       <h2 style="margin:0;color:var(--navy);">Add transactions</h2>
       <p class="small">Paste from your bank or card. Nettly figures out the format.</p>
-      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Start with <strong>1–3 months</strong> of transactions for the best experience. More than 3 months can make category review overwhelming.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Download the <strong>last 45 days</strong> of transactions from each account. Paste them one account at a time — you'll review them week by week before seeing your dashboard.</p>
 
             <div class="card" style="margin-top:0;">
         <label class="small" style="display:flex;align-items:center;gap:0.5rem;margin:0;">
@@ -112,12 +112,34 @@
       </div>
     </section>
 
-    <!-- MERCHANT REVIEW -->
+    <!-- MERCHANT REVIEW (kept for bulk merchant fixes) -->
     <section id="screen-merchants" class="screen">
       <h2 style="margin:0;color:var(--navy);">Quick category check</h2>
       <p class="small">Choose once per merchant — we apply it to all matching transactions.</p>
       <div id="merchant-list"></div>
-      <button type="button" class="btn btn-primary" id="btn-merchants-done">Continue to Safety Net</button>
+      <button type="button" class="btn btn-primary" id="btn-merchants-done">Continue →</button>
+    </section>
+
+    <!-- WEEK-BY-WEEK TRANSACTION REVIEW -->
+    <section id="screen-review" class="screen">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
+        <h2 style="margin:0;color:var(--navy);" id="review-heading">Review Transactions</h2>
+        <span class="small" id="review-progress"></span>
+      </div>
+      <p class="small" id="review-subhead"></p>
+
+      <!-- Progress bar -->
+      <div style="background:var(--border);border-radius:999px;height:6px;margin:0.5rem 0 1rem;">
+        <div id="review-progress-bar" style="background:var(--teal);height:6px;border-radius:999px;transition:width 0.4s;width:0%;"></div>
+      </div>
+
+      <div id="review-tx-list"></div>
+
+      <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+        <button type="button" class="btn btn-ghost" id="btn-review-prev" style="flex:1;margin-top:0;">← Previous</button>
+        <button type="button" class="btn btn-primary" id="btn-review-next" style="flex:1;margin-top:0;">Next Week →</button>
+      </div>
+      <button type="button" class="btn btn-secondary" id="btn-review-done" style="margin-top:0.5rem;">All done — Continue</button>
     </section>
 
     <!-- SAFETY NET -->
