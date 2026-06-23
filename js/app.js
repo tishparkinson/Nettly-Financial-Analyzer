@@ -44,7 +44,7 @@ function show(name) {
   Object.values(screens).forEach((el) => el.classList.remove("active"));
   screens[name].classList.add("active");
   if (name === "home") syncHomeCouples();
-  if (name === "upload") syncUploadCouples();
+  if (name === "upload") { syncUploadCouples(); syncUploadCouplesCheckbox(); }
   window.scrollTo(0, 0);
 }
 
@@ -132,15 +132,12 @@ document.getElementById("partner-primary-name").addEventListener("input", saveCo
 document.getElementById("partner-secondary-name").addEventListener("input", saveCouplesFromHome);
 
 document.getElementById("btn-new").addEventListener("click", () => {
-  saveCouplesFromHome();
-  const { couplesMode, partners } = state;
   state = defaultState();
-  state.couplesMode = couplesMode;
-  state.partners = { ...partners };
   state.startedAt = new Date().toISOString();
   pendingPaste = [];
   saveState(state);
   show("upload");
+  syncUploadCouples();
 });
 
 document.getElementById("btn-continue").addEventListener("click", () => {
@@ -174,6 +171,43 @@ document.getElementById("link-home-footer").addEventListener("click", (e) => {
 
 // --- Upload ---
 document.getElementById("btn-upload-back").addEventListener("click", () => show("home"));
+
+// Sync upload-screen couples checkbox with state
+function syncUploadCouplesCheckbox() {
+  const cb = document.getElementById("couples-mode-upload");
+  if (!cb) return;
+  cb.checked = Boolean(state.couplesMode);
+  const namesWrap = document.getElementById("couples-names-upload");
+  if (namesWrap) namesWrap.classList.toggle("hidden", !state.couplesMode);
+  const prim = document.getElementById("upload-primary-name");
+  const sec = document.getElementById("upload-secondary-name");
+  if (prim) prim.value = state.partners?.primary || "You";
+  if (sec) sec.value = state.partners?.secondary || "Partner";
+}
+
+document.getElementById("couples-mode-upload").addEventListener("change", (e) => {
+  state.couplesMode = e.target.checked;
+  document.getElementById("couples-names-upload").classList.toggle("hidden", !e.target.checked);
+  // sync hidden home inputs too
+  const homeCb = document.getElementById("couples-mode-home");
+  if (homeCb) homeCb.checked = e.target.checked;
+  saveState(state);
+  syncUploadCouples(); // updates account owner dropdown
+});
+
+document.getElementById("upload-primary-name").addEventListener("input", (e) => {
+  state.partners = { ...state.partners, primary: e.target.value.trim() || "You" };
+  document.getElementById("partner-primary-name").value = e.target.value;
+  saveState(state);
+});
+
+document.getElementById("upload-secondary-name").addEventListener("input", (e) => {
+  state.partners = { ...state.partners, secondary: e.target.value.trim() || "Partner" };
+  document.getElementById("partner-secondary-name").value = e.target.value;
+  saveState(state);
+});
+
+
 
 document.getElementById("btn-upload-start-over").addEventListener("click", () => {
   if (!confirm("Clear everything and start fresh? This removes all accounts and transactions you\'ve added.")) return;
@@ -253,9 +287,12 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   pendingPaste = [];
   saveState(state);
 
+  const unknownCount = state.transactions.filter((tx) => tx.category === "Unknown").length;
+  const unknownPct = state.transactions.length > 0 ? unknownCount / state.transactions.length : 0;
   const review = merchantsNeedingReview(state.transactions);
-  if (review.length) {
-    renderMerchantReview(review);
+  // Force review if many unknowns OR if any merchants need review
+  if (review.length || unknownPct > 0.15) {
+    renderMerchantReview(review, unknownPct);
     show("merchants");
   } else {
     show("safety");
@@ -264,14 +301,33 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 });
 
 // --- Merchants ---
-function renderMerchantReview(review) {
+function renderMerchantReview(review, unknownPct = 0) {
   const container = document.getElementById("merchant-list");
-  container.innerHTML = review.slice(0, 12).map((g) => `
+  // Also include Unknown transactions not in review list
+  const unknownMerchants = new Map();
+  for (const tx of state.transactions) {
+    if (tx.category === "Unknown") {
+      const m = tx.merchant || tx.description.slice(0, 40);
+      if (!unknownMerchants.has(m)) unknownMerchants.set(m, { merchant: m, count: 0, sample: tx.description });
+      unknownMerchants.get(m).count++;
+    }
+  }
+  const allReview = [...review];
+  for (const [m, g] of unknownMerchants) {
+    if (!allReview.find((r) => r.merchant === m)) allReview.push(g);
+  }
+  const warningHtml = unknownPct > 0.15
+    ? `<div style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.75rem 1rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;">
+        <strong>${Math.round(unknownPct * 100)}% of your transactions are uncategorized.</strong>
+        Categorizing them now makes your dashboard far more useful. Set a category for each merchant below — it applies to all matching transactions.
+       </div>`
+    : "";
+  container.innerHTML = warningHtml + allReview.slice(0, 30).map((g) => `
     <div class="merchant-review" data-merchant="${escapeAttr(g.merchant)}">
       <strong>${escapeHtml(g.merchant)}</strong>
       <span class="small"> — seen ${g.count} time${g.count > 1 ? "s" : ""}</span>
       <label>Category (applies to all)</label>
-      <select class="merchant-cat">${CATEGORIES.map((c) => `<option>${c}</option>`).join("")}</select>
+      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === "Unknown" ? "" : ""}>${cat}</option>`).join("")}</select>
     </div>
   `).join("");
 }
@@ -637,7 +693,9 @@ document.addEventListener("click", (e) => {
   const filtered = txs.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (new Date(tx.date) < cutoff) return false;
-    if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") return false;
+    const EXCLUDE = new Set(["Safety Net Contribution", "Transfer from Savings", "Savings", "Income", "Interest Income", "One-Time Income", "Transfer", "Unknown"]);
+    if (EXCLUDE.has(tx.category)) return false;
+    if (tx.amount >= 0) return false; // deposits/credits excluded
     return tx.needWant === type;
   });
 
@@ -679,21 +737,50 @@ document.addEventListener("click", (e) => {
   }
 
   const detail = document.getElementById("nw-detail");
-  detail.innerHTML = `
-    <div style="margin-top:0.75rem;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-        <strong style="color:var(--navy);">${label} Breakdown (90 days)</strong>
-        <span class="small">${fmtMoney(totalSpend)} total</span>
+  // Build merchant bar rows (same style as catRow)
+  function merchantRow(mer, amt) {
+    const barPct = Math.round((amt / (topMerchants[0]?.[1] || 1)) * 100);
+    const spendPct = totalSpend > 0 ? Math.round((amt / totalSpend) * 100) : 0;
+    return `<div style="margin:0.5rem 0;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
+        <span style="font-size:0.88rem;font-weight:600;color:var(--navy);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:65%;">${escapeHtml(mer)}</span>
+        <span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">${fmtMoney(amt)} · ${spendPct}%</span>
       </div>
-      ${topCats.map(([cat, amt]) => catRow(cat, amt)).join("") || "<p class='small'>No transactions found.</p>"}
-      <h4 style="margin:1rem 0 0.4rem;color:var(--navy);">Top Merchants — ${label}</h4>
-      ${topMerchants.map(([mer, amt]) => `
-        <div style="display:flex;justify-content:space-between;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.88rem;">
-          <span>${escapeHtml(mer)}</span>
-          <span style="color:var(--muted);">${fmtMoney(amt)}</span>
-        </div>`).join("") || "<p class='small'>None.</p>"}
-      ${monthlyIncome > 0 ? `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Income estimate: ${fmtMoney(monthlyIncome)}/mo (90-day average). Percentages are monthly averages.</p>` : `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Add income transactions to see % of income breakdowns and budget guidance.</p>`}
+      <div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">
+        <div style="background:var(--slate);width:${barPct}%;height:8px;border-radius:999px;transition:width 0.3s;"></div>
+      </div>
     </div>`;
+  }
+
+  let nwView = detail.dataset.view || "categories";
+  function renderNwDetail() {
+    detail.innerHTML = `
+      <div style="margin-top:0.75rem;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.65rem;flex-wrap:wrap;gap:0.4rem;">
+          <strong style="color:var(--navy);">${label} Breakdown (90 days) · ${fmtMoney(totalSpend)}</strong>
+          <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:0.82rem;">
+            <button type="button" data-nw-view="categories" style="padding:0.3rem 0.65rem;border:none;cursor:pointer;background:${nwView==="categories"?"var(--navy)":"#fff"};color:${nwView==="categories"?"#fff":"var(--slate)"};">Categories</button>
+            <button type="button" data-nw-view="merchants" style="padding:0.3rem 0.65rem;border:none;cursor:pointer;background:${nwView==="merchants"?"var(--navy)":"#fff"};color:${nwView==="merchants"?"#fff":"var(--slate)"};">Merchants</button>
+          </div>
+        </div>
+        ${nwView === "categories"
+          ? (topCats.map(([cat, amt]) => catRow(cat, amt)).join("") || "<p class='small'>No transactions found.</p>")
+          : (topMerchants.map(([mer, amt]) => merchantRow(mer, amt)).join("") || "<p class='small'>No merchants found.</p>")
+        }
+        ${monthlyIncome > 0
+          ? `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Income estimate: ${fmtMoney(monthlyIncome)}/mo (90-day avg). Percentages of income are monthly averages.</p>`
+          : `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Add income transactions to unlock % of income breakdowns and budget guidance.</p>`}
+      </div>`;
+    // Wire toggle buttons
+    detail.querySelectorAll("[data-nw-view]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        nwView = btn.dataset.nwView;
+        detail.dataset.view = nwView;
+        renderNwDetail();
+      });
+    });
+  }
+  renderNwDetail();
 });
 
 document.getElementById("btn-download-snapshot").addEventListener("click", () => downloadSnapshot(state));
