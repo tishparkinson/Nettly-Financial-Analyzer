@@ -46,7 +46,17 @@ function show(name) {
   Object.values(screens).forEach((el) => el && el.classList.remove("active"));
   if (screens[name]) screens[name].classList.add("active");
   if (name === "home") syncHomeCouples();
-  if (name === "upload") { syncUploadCouples(); syncUploadCouplesCheckbox(); }
+  if (name === "upload") {
+    syncUploadCouples();
+    syncUploadCouplesCheckbox();
+    const hint = document.getElementById("cutoff-date-hint");
+    if (hint) {
+      const d = new Date();
+      d.setDate(d.getDate() - 45);
+      const label = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+      hint.textContent = label;
+    }
+  }
   window.scrollTo(0, 0);
 }
 
