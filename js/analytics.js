@@ -27,13 +27,89 @@ export function merchantsNeedingReview(transactions, threshold = 0.8) {
   return [...groups.values()].sort((a, b) => b.count - a.count);
 }
 
-export function averageNeedsSpending(transactions, days = 90) {
+
+/**
+ * Detect recurring transactions within a 45-day window.
+ * Looks for 2+ charges from the same merchant at approximately the same amount
+ * spaced ~monthly (25–35 days), ~biweekly (12–16 days), or ~weekly (6–8 days).
+ * Returns a Map keyed by tx.id → { isRecurring, interval, lastDate, lastAmt }
+ */
+export function detectRecurring45(transactions) {
+  const debits = transactions
+    .filter((tx) => tx.amount < 0)
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  // Group by merchant + rounded amount (within 5% or $2)
+  const groups = new Map();
+  for (const tx of debits) {
+    const amt = Math.abs(tx.amount);
+    const merchant = tx.merchant || (tx.description || "").slice(0, 30).toUpperCase();
+    // Try to match an existing group
+    let matched = false;
+    for (const [key, g] of groups) {
+      if (g.merchant !== merchant) continue;
+      const diff = Math.abs(g.refAmt - amt);
+      if (diff <= 2 || diff / g.refAmt <= 0.05) {
+        g.entries.push({ id: tx.id, date: tx.date, amt });
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) {
+      const key = `${merchant}|${Math.round(amt)}`;
+      groups.set(key, { merchant, refAmt: amt, entries: [{ id: tx.id, date: tx.date, amt }] });
+    }
+  }
+
+  const INTERVALS = [
+    { name: "monthly",   min: 25, max: 35 },
+    { name: "biweekly",  min: 12, max: 16 },
+    { name: "weekly",    min:  6, max:  8 },
+  ];
+
+  const result = new Map(); // tx.id → { isRecurring, interval, lastDate, lastAmt }
+
+  for (const g of groups.values()) {
+    if (g.entries.length < 2) continue;
+    const sorted = g.entries.sort((a, b) => a.date.localeCompare(b.date));
+
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      const days = (new Date(curr.date) - new Date(prev.date)) / 86400000;
+      const interval = INTERVALS.find((iv) => days >= iv.min && days <= iv.max);
+      if (interval) {
+        // Mark current as recurring, note the previous as evidence
+        result.set(curr.id, {
+          isRecurring: true,
+          interval: interval.name,
+          lastDate: prev.date,
+          lastAmt: prev.amt,
+        });
+        // Also mark previous as recurring if not already
+        if (!result.has(prev.id)) {
+          result.set(prev.id, {
+            isRecurring: true,
+            interval: interval.name,
+            lastDate: null,
+            lastAmt: null,
+          });
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+export function averageNeedsSpending(transactions, days = 45) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const needs = transactions.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (tx.isReimbursement) return false;
-    if (tx.category === "Safety Net Contribution" || tx.category === "Savings" || tx.category === "Transfer from Savings") return false;
+    if (tx.isOneTime) return false; // exclude one-time expenses from monthly average
+    if (tx.category === "Safety Net Contribution" || tx.category === "Savings" || tx.category === "Transfer from Savings" || tx.category === "Transfer from Checking") return false;
     return tx.needWant === "need" || isNeedCategory(tx.category);
   });
   const inWindow = needs.filter((tx) => new Date(tx.date) >= cutoff);
@@ -55,7 +131,7 @@ export function needsVsWants(transactions, days = 90) {
   for (const tx of transactions) {
     if (tx.amount >= 0) continue;
     if (new Date(tx.date) < cutoff) continue;
-    if (tx.category === "Safety Net Contribution" || tx.category === "Transfer from Savings") continue;
+    if (tx.category === "Safety Net Contribution") continue;
     const abs = Math.abs(tx.amount);
     if (tx.needWant === "need") needs += abs;
     else wants += abs;
