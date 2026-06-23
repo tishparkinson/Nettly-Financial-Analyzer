@@ -71,6 +71,22 @@ export const DEFAULT_TAGS = [
   "Gift Giving"
 ];
 
+// Suggested tags for Clothing, Shoes & Apparel transactions
+// Shown as quick-apply suggestions during week-by-week review
+export const CLOTHING_TAGS = [
+  "For Me",
+  "For Partner",
+  "For Kids",
+  "For Baby",
+  "Work Clothes",
+  "School Clothes",
+  "Shoes",
+  "Workout Gear",
+  "Formal / Occasion",
+  "Seasonal",
+  "Gift"
+];
+
 /** Keyword → category, confidence 0–1 */
 export const MERCHANT_RULES = [
   { re: /netflix|spotify|hulu|disney\+|apple\.com\/bill|youtube premium|amazon prime/i, cat: "Subscriptions", conf: 0.98 },
@@ -85,7 +101,7 @@ export const MERCHANT_RULES = [
   { re: /rent|mortgage|landlord|property mgmt|hoa/i, cat: "Housing", conf: 0.92 },
   { re: /electric|power|water|sewer|utility|pg&e|duke energy/i, cat: "Utilities", conf: 0.91 },
   { re: /cvs|walgreens|pharmacy|medical|hospital|clinic|dental|doctor/i, cat: "Healthcare", conf: 0.88 },
-  { re: /old navy|gap |h&m|zara|forever 21|express |torrid|kohls|kohl's|nordstrom|tj maxx|tjmaxx|ross dress|burlington coat|marshalls|clothing|shoe carnival|foot locker|nike |adidas |payless|victoria.?s secret|american eagle|hollister|bath.?body|hot topic|rue21|dsw|skechers|new balance|vans |converse|steve madden|aldo |nine west|rack room shoes|famous footwear|finish line|journeys|shoe dept|boot barn|ugg |bobs shoes|crocs |dr martens|clarks |timberland|birkenstock/i, cat: "Clothing, Shoes & Apparel", conf: 0.9 },
+  { re: /nordstrom|nordstrom rack|bloomingdales|bloomingdale|macys|macy's|dillards|dillard's|jcpenney|jc penney|belk |bealls|boscovs|lord.?taylor|saks fifth|neiman marcus|neiman |old navy|gap |gap kids|banana republic|h&m|zara |uniqlo|forever 21|shein |fashion nova|express |torrid|lane bryant|avenue |ashley stewart|american eagle|aerie |hollister|abercrombie|ae outfitters|francesca|chicos|chico's|white house black|whbm|ann taylor|loft |talbots|soma |coldwater creek|cato |maurices|dressbarn|dress barn|christopher.?banks|new york.?co|ny.?co |cache |wet seal|charlotte russe|buckle |the buckle|zumiez |pacsun|pacific sunwear|rue21|rei\b|lululemon|athleta|fabletics|vuori |alo yoga|under armour|columbia sportswear|the north face|north face|patagonia|outdoor voices|sweaty betty|clothing|apparel|tj maxx|tjmaxx|t\.j\.maxx|ross dress|ross stores|burlington coat|burlington stores|marshalls|tuesday morning|stein mart|bealls outlet|victoria.?s secret|savage x fenty|adore me|carters|carter's|oshkosh|osh kosh|gymboree|children.?place|baby gap|janie.?jack|hanna andersson|dickies|carhartt|davids bridal|david's bridal|azazie |kleinfeld|mens wearhouse|men's wearhouse|jos.?a.?bank|hot topic|spencers|spencer gifts|claires|claire's|bath.?body|bebe |guess |ralph lauren|polo ralph|tommy hilfiger|calvin klein|kate spade|michael kors|coach\b|fossil |vera bradley|dsw\b|shoe carnival|shoe dept|rack room shoes|foot locker|footlocker|kids foot locker|champs sports|finish line|journeys|shoe sensation|famous footwear|shoe show|bakers shoes|skechers|new balance|vans\b|converse|steve madden|aldo |nine west|naturalizer|boot barn|sheplers|cavenders|western wear|ugg |bobs shoes|crocs |dr martens|clarks |timberland|birkenstock|merrell |keen\b|salomon |brooks running|hoka |on running|asics |saucony|nike |adidas |reebok |puma |fila |champion /i, cat: "Clothing, Shoes & Apparel", conf: 0.90 },
   { re: /amazon(?! prime)|target|home depot|lowe'?s|ikea|household/i, cat: "Household", conf: 0.75 },
   { re: /uber(?!\s*eats)|lyft|parking|toll|transit|metro|bus pass|ferry/i, cat: "Transportation", conf: 0.85 },
   { re: /payroll|direct dep|salary|employer|ach credit|deposit/i, cat: "Income", conf: 0.85 },
