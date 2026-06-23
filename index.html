@@ -44,15 +44,11 @@
       <button type="button" class="btn btn-primary" id="btn-new">Start New Snapshot</button>
       <button type="button" class="btn btn-secondary" id="btn-continue">Continue From Snapshot</button>
       <input type="file" id="snapshot-upload" accept=".ntly,.json" class="hidden">
-      <div class="card" style="margin-top:1.25rem;">
-        <label class="small" style="display:flex;align-items:center;gap:0.5rem;margin:0;">
-          <input type="checkbox" id="couples-mode-home" style="width:auto;flex-shrink:0;"> Couples / household mode
-        </label>
-        <p class="small" style="margin-top:0.5rem;">Track separate accounts for two people, with a combined household view.</p>
-        <div id="couples-names-home" class="hidden">
-          <label>Your name</label>
+      <!-- couples inputs kept for JS compatibility but hidden -->
+      <div class="hidden">
+        <input type="checkbox" id="couples-mode-home">
+        <div id="couples-names-home">
           <input id="partner-primary-name" placeholder="You">
-          <label>Partner name</label>
           <input id="partner-secondary-name" placeholder="Partner">
         </div>
       </div>
@@ -67,17 +63,23 @@
       <p class="small">Paste from your bank or card. Nettly figures out the format.</p>
       <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Start with <strong>1–3 months</strong> of transactions for the best experience. More than 3 months can make category review overwhelming.</p>
 
+            <div class="card" style="margin-top:0;">
+        <label class="small" style="display:flex;align-items:center;gap:0.5rem;margin:0;">
+          <input type="checkbox" id="couples-mode-upload" style="width:auto;flex-shrink:0;"> Couples / household mode
+        </label>
+        <p class="small" style="margin-top:0.35rem;margin-bottom:0;">Track separate accounts for two people, with a combined view.</p>
+        <div id="couples-names-upload" class="hidden" style="margin-top:0.5rem;">
+          <label>Your name</label>
+          <input id="upload-primary-name" placeholder="You">
+          <label>Partner name</label>
+          <input id="upload-secondary-name" placeholder="Partner">
+        </div>
+      </div>
+
       <div class="card">
         <label>Account nickname</label>
-        <input id="acct-nickname" placeholder="Main Checking" list="nickname-hints">
-        <datalist id="nickname-hints">
-          <option>Main Checking</option>
-          <option>Household Checking</option>
-          <option>Emergency Savings</option>
-          <option>Credit One</option>
-          <option>Capital One</option>
-          <option>Cash Wallet</option>
-        </datalist>
+        <input id="acct-nickname" placeholder="e.g. Main Checking">
+        <p class="small" style="margin-top:0.35rem;">Examples: Main Checking · Savings · Emergency Fund · Savings 2 · Car Savings · Credit Card · Cash Wallet</p>
         <label>Account type</label>
         <select id="acct-type">
           <option value="Checking">Checking</option>
