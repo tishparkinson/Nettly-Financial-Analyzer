@@ -29,6 +29,7 @@ export const CATEGORIES = [
   "Transfer from Savings",
   "Transfer from Checking",
   "ATM & Bank Fees",
+  "ATM Withdrawal / Cash",
   "Religious Contribution",
   "Charity & Donations",
   "Miscellaneous",
@@ -73,6 +74,36 @@ export const DEFAULT_TAGS = [
 
 // Suggested tags for Clothing, Shoes & Apparel transactions
 // Shown as quick-apply suggestions during week-by-week review
+export const TRANSPORTATION_TAGS = [
+  "Gas / Fuel",
+  "Tires",
+  "Oil Change",
+  "Vehicle Maintenance",
+  "Vehicle Repair",
+  "Car Wash",
+  "Parking",
+  "Toll",
+  "Registration / DMV",
+  "Insurance Payment",
+  "Ride Share",
+  "Public Transit",
+  "Vehicle Extras",
+  "Work Vehicle",
+];
+
+export const ATM_CASH_TAGS = [
+  "Groceries (Cash)",
+  "Dining (Cash)",
+  "Gas (Cash)",
+  "Kids / School",
+  "Entertainment",
+  "Personal Care (Cash)",
+  "Donations / Church",
+  "Household (Cash)",
+  "Tip / Gratuity",
+  "Unknown / Misc",
+];
+
 export const CLOTHING_TAGS = [
   "For Me",
   "For Partner",
@@ -111,6 +142,7 @@ export const MERCHANT_RULES = [
   { re: /transfer from savings|savings transfer|xfer from sav|from savings/i, cat: "Transfer from Savings", conf: 0.95 },
   { re: /transfer from checking|xfer from chk|from checking|checking transfer/i, cat: "Transfer from Checking", conf: 0.95 },
   { re: /atm fee|non-network atm|out-of-network atm|foreign atm|atm surcharge|cash machine fee|atm withdrawal fee|bank fee|monthly fee|service fee|maintenance fee|overdraft fee|nsf fee|insufficient fund/i, cat: "ATM & Bank Fees", conf: 0.95 },
+  { re: /atm withdrawal|cash withdrawal|atm cash|atm dispense|withdrew cash|cash advance|atm debit|atm wd|atm-wd|withdrawal/i, cat: "ATM Withdrawal / Cash", conf: 0.90 },
   { re: /tithe|tithing|church|diocese|parish|synagogue|mosque|temple|lds|latter.day|ward donation|fast offering|missionary fund/i, cat: "Religious Contribution", conf: 0.93 },
   { re: /donation|donate|charity|charitable|goodwill|salvation army|red cross|habitat for humanity|united way|gofundme|npo|nonprofit|non-profit/i, cat: "Charity & Donations", conf: 0.9 },
   { re: /capital one|credit one|payment thank you|card payment/i, cat: "Miscellaneous", conf: 0.6 }
