@@ -187,7 +187,7 @@ function syncUploadCouplesCheckbox() {
   if (sec) sec.value = state.partners?.secondary || "Partner";
 }
 
-document.getElementById("couples-mode-upload").addEventListener("change", (e) => {
+(document.getElementById("couples-mode-upload") || document.createElement("input")).addEventListener("change", (e) => {
   state.couplesMode = e.target.checked;
   document.getElementById("couples-names-upload").classList.toggle("hidden", !e.target.checked);
   // sync hidden home inputs too
@@ -197,13 +197,13 @@ document.getElementById("couples-mode-upload").addEventListener("change", (e) =>
   syncUploadCouples(); // updates account owner dropdown
 });
 
-document.getElementById("upload-primary-name").addEventListener("input", (e) => {
+(document.getElementById("upload-primary-name") || document.createElement("input")).addEventListener("input", (e) => {
   state.partners = { ...state.partners, primary: e.target.value.trim() || "You" };
   document.getElementById("partner-primary-name").value = e.target.value;
   saveState(state);
 });
 
-document.getElementById("upload-secondary-name").addEventListener("input", (e) => {
+(document.getElementById("upload-secondary-name") || document.createElement("input")).addEventListener("input", (e) => {
   state.partners = { ...state.partners, secondary: e.target.value.trim() || "Partner" };
   document.getElementById("partner-secondary-name").value = e.target.value;
   saveState(state);
@@ -442,19 +442,20 @@ function renderReviewWeek(acct) {
     ((reviewAcctIdx * totalWeeks + reviewWeekIdx) / (totalAccts * totalWeeks)) * 100
   );
 
-  document.getElementById("review-heading").textContent =
+  (document.getElementById("review-heading")||{textContent:""}).textContent =
     `Review — ${acct}`;
-  document.getElementById("review-subhead").textContent =
+  (document.getElementById("review-subhead")||{textContent:""}).textContent =
     `Week: ${week.label} · ${week.txIds.length} transaction${week.txIds.length !== 1 ? "s" : ""}` +
     (totalAccts > 1 ? ` · Account ${reviewAcctIdx + 1} of ${totalAccts}` : "");
-  document.getElementById("review-progress").textContent =
+  (document.getElementById("review-progress")||{textContent:""}).textContent =
     `Week ${reviewWeekIdx + 1} of ${totalWeeks}`;
-  document.getElementById("review-progress-bar").style.width = `${pct}%`;
+  (document.getElementById("review-progress-bar")||{style:{}}).style.width = `${pct}%`;
 
   // Prev/Next visibility
-  document.getElementById("btn-review-prev").style.visibility =
-    reviewWeekIdx === 0 ? "hidden" : "visible";
-  document.getElementById("btn-review-next").textContent =
+  const prevBtn = document.getElementById("btn-review-prev");
+  if (prevBtn) prevBtn.style.visibility = reviewWeekIdx === 0 ? "hidden" : "visible";
+  const nextBtn = document.getElementById("btn-review-next");
+  if (nextBtn) nextBtn.textContent =
     reviewWeekIdx < totalWeeks - 1
       ? "Next Week →"
       : reviewAcctIdx < reviewAccountList.length - 1
@@ -571,7 +572,7 @@ function saveReviewTx(txId, cat, nw, tags, isRecurring, isOneTime) {
   saveState(state);
 }
 
-document.getElementById("btn-review-next").addEventListener("click", () => {
+(document.getElementById("btn-review-next") || {addEventListener:()=>{}}).addEventListener("click", () => {
   // Save any pending changes (already saved on change), advance week
   if (reviewWeekIdx < reviewWeeks.length - 1) {
     reviewWeekIdx++;
@@ -581,14 +582,14 @@ document.getElementById("btn-review-next").addEventListener("click", () => {
   }
 });
 
-document.getElementById("btn-review-prev").addEventListener("click", () => {
+(document.getElementById("btn-review-prev") || {addEventListener:()=>{}}).addEventListener("click", () => {
   if (reviewWeekIdx > 0) {
     reviewWeekIdx--;
     renderReviewWeek(reviewAccountList[reviewAcctIdx]);
   }
 });
 
-document.getElementById("btn-review-done").addEventListener("click", () => {
+(document.getElementById("btn-review-done") || {addEventListener:()=>{}}).addEventListener("click", () => {
   saveState(state);
   show("safety");
   populateSafetyNetAccountList();
