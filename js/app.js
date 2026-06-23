@@ -1,4 +1,4 @@
-import { CATEGORIES, DEFAULT_TAGS } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
@@ -502,6 +502,18 @@ function renderReviewWeek(acct) {
 
       <div>
         <label style="font-size:0.75rem;margin-bottom:0.3rem;">Tags (optional)</label>
+        ${tx.category === "Clothing, Shoes & Apparel" ? `
+          <p style="font-size:0.72rem;color:var(--teal);margin:0 0 0.3rem;font-weight:600;">
+            💡 Tag who this is for and what type — helps track per-person clothing spend over time.
+          </p>
+          <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem;">
+            ${CLOTHING_TAGS.map((tag) =>
+              `<button type="button" class="tag-chip review-tag-chip${(tx.tags||[]).includes(tag) ? " active" : ""}"
+                data-tx-id="${escapeAttr(tx.id)}" data-tag="${escapeAttr(tag)}"
+                style="font-size:0.75rem;padding:0.2rem 0.55rem;background:${(tx.tags||[]).includes(tag)?"var(--teal-soft)":"#f0f9f9"};border-color:${(tx.tags||[]).includes(tag)?"var(--teal)":"#c5dede"};">${escapeHtml(tag)}</button>`
+            ).join("")}
+          </div>
+          <p style="font-size:0.7rem;color:var(--muted);margin:0 0 0.3rem;">Or add from all tags:</p>` : ""}
         <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem;">
           ${[...DEFAULT_TAGS, ...(state.customTags || [])].map((tag) =>
             `<button type="button" class="tag-chip review-tag-chip${(tx.tags||[]).includes(tag) ? " active" : ""}"
