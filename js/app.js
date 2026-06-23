@@ -43,8 +43,8 @@ const screens = {
 };
 
 function show(name) {
-  Object.values(screens).forEach((el) => el.classList.remove("active"));
-  screens[name].classList.add("active");
+  Object.values(screens).forEach((el) => el && el.classList.remove("active"));
+  if (screens[name]) screens[name].classList.add("active");
   if (name === "home") syncHomeCouples();
   if (name === "upload") { syncUploadCouples(); syncUploadCouplesCheckbox(); }
   window.scrollTo(0, 0);
