@@ -1,4 +1,4 @@
-import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
@@ -442,6 +442,12 @@ function advanceReviewAccount() {
   }
 }
 
+const DAY_NAMES = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function fmtDateWithDay(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  return DAY_NAMES[d.getDay()] + " " + dateStr;
+}
+
 function renderReviewWeek(acct) {
   const week = reviewWeeks[reviewWeekIdx];
   if (!week) { advanceReviewAccount(); return; }
@@ -479,7 +485,7 @@ function renderReviewWeek(acct) {
   container.innerHTML = txs.map((tx) => `
     <div class="review-tx-card" data-tx-id="${escapeAttr(tx.id)}" style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:0.85rem;margin:0.5rem 0;">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.4rem;">
-        <span style="font-size:0.82rem;color:var(--muted);">${escapeHtml(tx.date)}</span>
+        <span style="font-size:0.82rem;color:var(--muted);">${escapeHtml(fmtDateWithDay(tx.date))}</span>
         <strong style="color:var(--navy);">${fmtMoney(Math.abs(tx.amount))}</strong>
       </div>
       <div style="font-size:0.9rem;margin-bottom:0.6rem;word-break:break-word;">${escapeHtml(tx.description.slice(0, 60))}</div>
@@ -502,25 +508,50 @@ function renderReviewWeek(acct) {
 
       <div>
         <label style="font-size:0.75rem;margin-bottom:0.3rem;">Tags (optional)</label>
-        ${tx.category === "Clothing, Shoes & Apparel" ? `
-          <p style="font-size:0.72rem;color:var(--teal);margin:0 0 0.3rem;font-weight:600;">
-            💡 Tag who this is for and what type — helps track per-person clothing spend over time.
-          </p>
-          <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem;">
-            ${CLOTHING_TAGS.map((tag) =>
-              `<button type="button" class="tag-chip review-tag-chip${(tx.tags||[]).includes(tag) ? " active" : ""}"
-                data-tx-id="${escapeAttr(tx.id)}" data-tag="${escapeAttr(tag)}"
-                style="font-size:0.75rem;padding:0.2rem 0.55rem;background:${(tx.tags||[]).includes(tag)?"var(--teal-soft)":"#f0f9f9"};border-color:${(tx.tags||[]).includes(tag)?"var(--teal)":"#c5dede"};">${escapeHtml(tag)}</button>`
-            ).join("")}
-          </div>
-          <p style="font-size:0.7rem;color:var(--muted);margin:0 0 0.3rem;">Or add from all tags:</p>` : ""}
-        <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem;">
-          ${[...DEFAULT_TAGS, ...(state.customTags || [])].map((tag) =>
-            `<button type="button" class="tag-chip review-tag-chip${(tx.tags||[]).includes(tag) ? " active" : ""}"
+        ${(() => {
+          const catTags =
+            tx.category === "Clothing, Shoes & Apparel" ? { list: CLOTHING_TAGS, hint: "💡 Tag who this is for and what type — tracks per-person clothing spend over time." } :
+            (tx.category === "Transportation" || tx.category === "Transportation Maintenance") ? { list: TRANSPORTATION_TAGS, hint: "💡 Tag what this was for — helps break down your vehicle costs." } :
+            tx.category === "ATM Withdrawal / Cash" ? { list: ATM_CASH_TAGS, hint: "💡 Tag what you used this cash for — cash spending is easy to lose track of." } :
+            null;
+          const allTags = [...DEFAULT_TAGS, ...(state.customTags || [])];
+          const txTags = tx.tags || [];
+          function chipHtml(tag, highlight) {
+            const active = txTags.includes(tag);
+            return `<button type="button" class="tag-chip review-tag-chip${active ? " active" : ""}"
               data-tx-id="${escapeAttr(tx.id)}" data-tag="${escapeAttr(tag)}"
-              style="font-size:0.75rem;padding:0.2rem 0.55rem;">${escapeHtml(tag)}</button>`
-          ).join("")}
-        </div>
+              style="font-size:0.75rem;padding:0.2rem 0.6rem;${highlight && !active ? "background:#f0f9f9;border-color:#c5dede;" : ""}">${escapeHtml(tag)}</button>`;
+          }
+          return `
+            ${catTags ? `
+              <p style="font-size:0.72rem;color:var(--teal);margin:0 0 0.35rem;font-weight:600;">${catTags.hint}</p>
+              <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.4rem;">
+                ${catTags.list.map((t) => chipHtml(t, true)).join("")}
+              </div>
+              <details style="margin-bottom:0.3rem;">
+                <summary style="font-size:0.72rem;color:var(--muted);cursor:pointer;list-style:none;">▸ All tags &amp; create new</summary>
+                <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin:0.35rem 0;">
+                  ${allTags.map((t) => chipHtml(t, false)).join("")}
+                </div>
+                <div style="display:flex;gap:0.4rem;margin-top:0.3rem;">
+                  <input type="text" class="review-new-tag-input" data-tx-id="${escapeAttr(tx.id)}"
+                    placeholder="Create tag…"
+                    style="flex:1;font-size:0.8rem;padding:0.25rem 0.5rem;border:1px solid var(--border);border-radius:8px;">
+                  <button type="button" class="review-new-tag-btn" data-tx-id="${escapeAttr(tx.id)}"
+                    style="font-size:0.8rem;padding:0.25rem 0.6rem;border-radius:8px;border:1px solid var(--teal);background:var(--teal-soft);color:var(--navy);cursor:pointer;">Add</button>
+                </div>
+              </details>` : `
+              <div style="display:flex;flex-wrap:wrap;gap:0.3rem;margin-bottom:0.3rem;">
+                ${allTags.map((t) => chipHtml(t, false)).join("")}
+              </div>
+              <div style="display:flex;gap:0.4rem;margin-top:0.3rem;">
+                <input type="text" class="review-new-tag-input" data-tx-id="${escapeAttr(tx.id)}"
+                  placeholder="Create new tag…"
+                  style="flex:1;font-size:0.8rem;padding:0.25rem 0.5rem;border:1px solid var(--border);border-radius:8px;">
+                <button type="button" class="review-new-tag-btn" data-tx-id="${escapeAttr(tx.id)}"
+                  style="font-size:0.8rem;padding:0.25rem 0.6rem;border-radius:8px;border:1px solid var(--teal);background:var(--teal-soft);color:var(--navy);cursor:pointer;">Add</button>
+              </div>`}`;
+        })()}
       </div>
 
       <div style="margin-top:0.5rem;">
@@ -561,6 +592,31 @@ function renderReviewWeek(acct) {
       saveReviewTx(btn.dataset.txId, null, null, tags, null, null);
     });
   });
+  // Create new tag from review card
+  container.querySelectorAll(".review-new-tag-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const input = container.querySelector(`.review-new-tag-input[data-tx-id="${btn.dataset.txId}"]`);
+      if (!input) return;
+      const tag = input.value.trim();
+      if (!tag) return;
+      if (!state.customTags.includes(tag)) state.customTags.push(tag);
+      const tx = state.transactions.find((t) => t.id === btn.dataset.txId);
+      if (tx && !(tx.tags || []).includes(tag)) {
+        saveReviewTx(btn.dataset.txId, null, null, [...(tx.tags || []), tag], null, null);
+      }
+      input.value = "";
+      saveState(state);
+      renderReviewWeek(reviewAccountList[reviewAcctIdx]); // re-render to show new chip
+    });
+    // Also allow Enter key
+    const input = container.querySelector(`.review-new-tag-input[data-tx-id="${btn.dataset.txId}"]`);
+    if (input) {
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") { e.preventDefault(); btn.click(); }
+      });
+    }
+  });
+
   container.querySelectorAll(".review-type-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const type = btn.dataset.type;
