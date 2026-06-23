@@ -989,7 +989,7 @@ document.addEventListener("click", (e) => {
       '<div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">' +
         '<div style="background:' + (overBudget ? '#e8a028' : 'var(--teal)') + ';width:' + barPct + '%;height:8px;border-radius:999px;transition:width 0.3s;"></div>' +
       '</div>' +
-      (overBudget && guideline ? '<p style="font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;">' + escapeHtml(guideline.note) + ' You're at ' + incomePct + '% — aim for ' + guideline.aim + '% or less.</p>' : '') +
+      (overBudget && guideline ? `<p style='font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;'>${escapeHtml(guideline.note)} Aim for ${guideline.aim}% or less. You are at ${incomePct}%.</p>` : '') +
     '</div>';
   }
 
