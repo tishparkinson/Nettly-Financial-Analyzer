@@ -1,16 +1,20 @@
+const MONTH_INDEX = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+};
+
+function parseMonthNameMatch(m) {
+  const monthIdx = MONTH_INDEX[m[1].slice(0, 3).toLowerCase()];
+  if (monthIdx == null) return new Date(NaN);
+  const year = m[3] ? parseInt(m[3], 10) : new Date().getFullYear();
+  return new Date(year, monthIdx, parseInt(m[2], 10));
+}
+
 const DATE_PATTERNS = [
   { re: /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/, parse: (m) => parseMDY(m[1], m[2], m[3]) },
   { re: /^(\d{4})-(\d{2})-(\d{2})\b/, parse: (m) => new Date(+m[1], +m[2] - 1, +m[3]) },
   { re: /^(\d{1,2})-(\d{1,2})-(\d{2,4})\b/, parse: (m) => parseMDY(m[1], m[2], m[3]) },
-  // Month-name formats: "Jan 2", "January 2", "Jan 2 2025", "January 02, 2025"
-  { re: /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+(\d{1,2})(?:[,\s]+(\d{4}))?\b/i,
-    parse: (m) => {
-      const months = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
-      const mo = months[m[1].slice(0,3).toLowerCase()];
-      const yr = m[3] ? +m[3] : new Date().getFullYear();
-      return new Date(yr, mo, +m[2]);
-    }
-  }
+  { re: /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?\b/, parse: parseMonthNameMatch }
 ];
 
 function parseMDY(m, d, y) {
@@ -56,76 +60,114 @@ function isHeaderLine(line) {
   return /^(date|posted|transaction|description|amount|debit|credit|balance)\b/i.test(line);
 }
 
+// Matches a standalone line like "Jul 3", "Jun 30", "Sep 5, 2025", "Dec 31, 2025"
+const MONTH_NAME_LINE_RE = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?$/;
+// Matches a standalone amount/balance line like "$100.00", "+$0.05", "-$63.05"
+const AMOUNT_LINE_RE = /^([+-]?)\$?([\d,]+\.\d{2})$/;
+// Common status markers that sometimes appear as their own line between a description and its date
+const STATUS_LINE_RE = /^(pending|posted|completed|cleared)$/i;
+
+/**
+ * Handles "app/online statement" export styles where a transaction is spread
+ * across several lines instead of one. Covers, in order of how much shares a
+ * line with the date:
+ *   A) Description / [status] / Mon D[, YYYY] / Amount / [Balance]   (3-5 lines)
+ *   B) Description / [status] / "Mon D Amount" combined / [Balance]  (2-3 lines)
+ *   C) "Mon D Description" combined / Amount / [Balance]             (2-3 lines)
+ * Returns parsed transactions plus which line indices it consumed, so the
+ * remaining lines can still fall through to the other parsing strategies.
+ */
+function parseStatementBlocks(lines, accountNickname, accountType) {
+  const consumed = new Array(lines.length).fill(false);
+  const results = [];
+
+  const pushResult = (date, description, amtMatch) => {
+    if (!description || isHeaderLine(description)) return false;
+    const amountAbs = parseFloat(amtMatch[2].replace(/,/g, ""));
+    if (!Number.isFinite(amountAbs)) return false;
+    if (amountAbs !== 0) {
+      const signedAmount = amtMatch[1] === "+" ? amountAbs : -amountAbs;
+      results.push(makeTx(date, description, signedAmount, accountNickname, accountType));
+    }
+    return true; // still "handled" even if $0.00 (e.g. rate-change noise) so it gets consumed
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    if (consumed[i]) continue;
+    const line = lines[i].trim();
+    const dateMatch = /^([A-Za-z]{3,9})\.?\s+(\d{1,2})(?:,?\s*(\d{4}))?\b/.exec(line);
+    if (!dateMatch) continue;
+    const date = parseMonthNameMatch(dateMatch);
+    if (Number.isNaN(date.getTime())) continue;
+    const rest = line.slice(dateMatch[0].length).trim();
+
+    // Case A: whole line was just the date -> description is the previous line, amount is the next
+    if (!rest) {
+      const amtMatch = lines[i + 1] ? AMOUNT_LINE_RE.exec(lines[i + 1].trim()) : null;
+      if (!amtMatch) continue;
+
+      let descIdx = i - 1;
+      if (descIdx >= 0 && STATUS_LINE_RE.test(lines[descIdx].trim())) {
+        consumed[descIdx] = true;
+        descIdx -= 1;
+      }
+      if (descIdx < 0 || consumed[descIdx]) continue;
+      const description = lines[descIdx].trim();
+
+      if (!pushResult(date, description, amtMatch)) continue;
+      consumed[descIdx] = true;
+      consumed[i] = true;
+      consumed[i + 1] = true;
+      if (lines[i + 2] && AMOUNT_LINE_RE.test(lines[i + 2].trim())) consumed[i + 2] = true;
+      continue;
+    }
+
+    // Case B: date + amount combined on one line ("Jul 3 $4.50") -> description is the previous line
+    const restAmtMatch = AMOUNT_LINE_RE.exec(rest);
+    if (restAmtMatch) {
+      let descIdx = i - 1;
+      if (descIdx >= 0 && STATUS_LINE_RE.test(lines[descIdx].trim())) {
+        consumed[descIdx] = true;
+        descIdx -= 1;
+      }
+      if (descIdx < 0 || consumed[descIdx]) continue;
+      const description = lines[descIdx].trim();
+
+      if (!pushResult(date, description, restAmtMatch)) continue;
+      consumed[descIdx] = true;
+      consumed[i] = true;
+      if (lines[i + 1] && AMOUNT_LINE_RE.test(lines[i + 1].trim())) consumed[i + 1] = true;
+      continue;
+    }
+
+    // Case C: date + description combined on one line ("Jul 3 STARBUCKS") -> amount is the next line
+    if (!/\$/.test(rest) && lines[i + 1] && AMOUNT_LINE_RE.test(lines[i + 1].trim())) {
+      const amtMatch = AMOUNT_LINE_RE.exec(lines[i + 1].trim());
+      if (!pushResult(date, rest, amtMatch)) continue;
+      consumed[i] = true;
+      consumed[i + 1] = true;
+      if (lines[i + 2] && AMOUNT_LINE_RE.test(lines[i + 2].trim())) consumed[i + 2] = true;
+      continue;
+    }
+  }
+
+  return { results, consumed };
+}
+
 /**
  * Parse pasted bank/credit card text into transactions.
  */
 export function parseTransactions(text, accountNickname, accountType) {
-  const lines = (text || "")
+  const allLines = (text || "")
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((l) => !isHeaderLine(l));
 
-  const results = [];
+  const { results: blockResults, consumed } = parseStatementBlocks(allLines, accountNickname, accountType);
+  const lines = allLines.filter((_, idx) => !consumed[idx]);
 
-  // ── Multi-line block detection ────────────────────────────────────────────
-  // Handles formats where each transaction spans multiple lines, e.g.:
-  //   MERCHANT DESCRIPTION       ← line 0: description (no date, no leading $)
-  //   Jan 2                      ← line 1: standalone date
-  //   $11.32                     ← line 2: amount (leading $)
-  //   $58.08                     ← line 3: running balance (skip)
-  //
-  // Detection: if >50% of lines are standalone dates or standalone $ amounts,
-  // treat the whole paste as multi-line blocks rather than single-line rows.
-  const isStandaloneDate = (l) => extractDateFromLine(l).date !== null && l.length < 30;
-  const isStandaloneDollar = (l) => /^\$[\d,]+\.\d{2}$/.test(l);
-  const isDescriptionLine = (l) => !isStandaloneDate(l) && !isStandaloneDollar(l) && !/^\d+\.\d{2}$/.test(l);
-
-  const standaloneDateCount = lines.filter(isStandaloneDate).length;
-  const standaloneDollarCount = lines.filter(isStandaloneDollar).length;
-
-  if (standaloneDateCount >= 2 && standaloneDollarCount >= 2 &&
-      (standaloneDateCount + standaloneDollarCount) / lines.length > 0.35) {
-    // Parse as multi-line blocks: group lines into [description, date, amount, balance?]
-    let i = 0;
-    while (i < lines.length) {
-      // Find a description line (no date, no leading $)
-      if (!isDescriptionLine(lines[i])) { i++; continue; }
-      const description = lines[i];
-      let date = null;
-      let amount = null;
-      let j = i + 1;
-
-      // Consume following lines that belong to this block
-      // A new block starts when we see another description line after we have date+amount
-      while (j < lines.length) {
-        const l = lines[j];
-        if (!date && isStandaloneDate(l)) {
-          date = extractDateFromLine(l).date;
-          j++; continue;
-        }
-        if (date && amount == null && (isStandaloneDollar(l) || /^\d+\.\d{2}$/.test(l))) {
-          amount = parseAmount(l);
-          j++; continue;
-        }
-        // Second dollar line = running balance, skip it
-        if (date && amount != null && (isStandaloneDollar(l) || /^\d+\.\d{2}$/.test(l))) {
-          j++; break;
-        }
-        // Hit something that looks like a new description — stop
-        if (isDescriptionLine(l) && date && amount != null) break;
-        if (isDescriptionLine(l) && !date && !amount) { j++; continue; }
-        j++;
-      }
-
-      if (date && amount != null && description.length > 1) {
-        results.push(makeTx(date, description, -Math.abs(amount), accountNickname, accountType));
-      }
-      i = j;
-    }
-    return results;
-  }
-  // ── End multi-line block detection ───────────────────────────────────────
+  const results = [...blockResults];
 
   for (const line of lines) {
     if (line.includes("\t")) {
