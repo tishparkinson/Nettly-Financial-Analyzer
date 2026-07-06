@@ -1,5 +1,7 @@
 export const CATEGORIES = [
   "Income",
+  "Interest Income",
+  "One-Time Income",
   "Housing",
   "Utilities",
   "Insurance",
@@ -16,6 +18,7 @@ export const CATEGORIES = [
   "Coffee & Convenience",
   "Healthcare",
   "Personal Care",
+  "Clothing, Shoes & Apparel",
   "Education",
   "Childcare",
   "Pet Care",
@@ -25,10 +28,16 @@ export const CATEGORIES = [
   "Travel",
   "Business Expenses",
   "Family Support",
+  "Charity & Donations",
+  "Religious Contribution",
   "Taxes",
   "Savings",
   "Safety Net Contribution",
-  "One-Time Income",
+  "Transfer",
+  "Transfer from Savings",
+  "Transfer from Checking",
+  "ATM Withdrawal / Cash",
+  "ATM & Bank Fees",
   "Miscellaneous",
   "Unknown"
 ];
@@ -71,31 +80,79 @@ export const DEFAULT_TAGS = [
   "Gift Giving"
 ];
 
-/** Keyword → category, confidence 0–1 */
+/** Tag presets shown for "Clothing, Shoes & Apparel" transactions. */
+export const CLOTHING_TAGS = [
+  "Kids",
+  "Adults",
+  "Work Clothes",
+  "Shoes",
+  "Outerwear",
+  "Seasonal / Back-to-School"
+];
+
+/** Tag presets shown for Transportation / Transportation Maintenance transactions. */
+export const TRANSPORTATION_TAGS = [
+  "Gas",
+  "Maintenance",
+  "Repairs",
+  "Parking / Tolls",
+  "Registration",
+  "Car Payment"
+];
+
+/** Tag presets shown for ATM Withdrawal / Cash transactions. */
+export const ATM_CASH_TAGS = [
+  "Groceries",
+  "Dining",
+  "Gifts",
+  "Kids",
+  "Personal",
+  "Miscellaneous"
+];
+
+/** Keyword → category, confidence 0–1. Order matters: more specific rules first. */
 export const MERCHANT_RULES = [
   { re: /netflix|spotify|hulu|disney\+|apple\.com\/bill|youtube premium|amazon prime/i, cat: "Subscriptions", conf: 0.98 },
-  { re: /walmart|costco|kroger|safeway|trader joe|whole foods|aldi|grocery|food lion|publix/i, cat: "Groceries", conf: 0.96 },
-  { re: /mcdonald|burger king|wendy|taco bell|chipotle|subway|fast food/i, cat: "Fast Food", conf: 0.95 },
-  { re: /starbucks|dunkin|coffee|7-eleven|circle k|wawa|sheetz/i, cat: "Coffee & Convenience", conf: 0.92 },
-  { re: /restaurant|grill|bistro|cafe|dining|doordash|uber eats|grubhub/i, cat: "Dining Out", conf: 0.88 },
-  { re: /shell|chevron|exxon|bp |mobil|gas station|fuel|ev charge|chargepoint/i, cat: "Transportation", conf: 0.94 },
-  { re: /auto zone|oreilly|jiffy lube|oil change|tire|meineke|car wash/i, cat: "Transportation Maintenance", conf: 0.9 },
-  { re: /geico|state farm|progressive|allstate|insurance/i, cat: "Insurance", conf: 0.93 },
+  { re: /walmart|costco|kroger|safeway|trader joe|whole foods|aldi|grocery|food lion|publix|broulim|maverik|family dollar/i, cat: "Groceries", conf: 0.9 },
+  { re: /mcdonald|burger king|wendy|taco bell|chipotle|subway|fast food|raising canes|firehouse subs|costa vida/i, cat: "Fast Food", conf: 0.95 },
+  { re: /starbucks|dunkin|dutch bros|coffee|7-eleven|circle k|wawa|sheetz/i, cat: "Coffee & Convenience", conf: 0.92 },
+  { re: /restaurant|grill|bistro|cafe|dining|doordash|uber eats|grubhub|applebee|jamba juice|cold stone|pretzelmaker/i, cat: "Dining Out", conf: 0.85 },
+  { re: /shell|chevron|exxon|bp |mobil|phillips 66|gas station|fuel|ev charge|chargepoint/i, cat: "Transportation", conf: 0.9 },
+  { re: /auto zone|oreilly|jiffy lube|oil change|tire|meineke|car wash|fixxology/i, cat: "Transportation Maintenance", conf: 0.88 },
+  { re: /geico|state farm|progressive|allstate|insurance/i, cat: "Insurance", conf: 0.9 },
   { re: /at&t|verizon|t-mobile|t mobile|cricket wireless|metro pcs|boost mobile|mint mobile|us cellular|straight talk/i, cat: "Phone", conf: 0.9 },
-  { re: /comcast|xfinity|spectrum|internet|fybercom|centurylink/i, cat: "Utilities", conf: 0.9 },
+  { re: /comcast|xfinity|spectrum|internet|fybercom|centurylink/i, cat: "Utilities", conf: 0.88 },
   { re: /adt|vivint|simplisafe|frontpoint|ring alarm|alarm\.com|home security/i, cat: "Home Security", conf: 0.9 },
-  { re: /rent|mortgage|landlord|property mgmt|hoa/i, cat: "Housing", conf: 0.92 },
-  { re: /electric|power|water|sewer|utility|pg&e|duke energy/i, cat: "Utilities", conf: 0.91 },
-  { re: /cvs|walgreens|pharmacy|medical|hospital|clinic|dental|doctor/i, cat: "Healthcare", conf: 0.88 },
-  { re: /amazon(?! prime)|target|home depot|lowe'?s|ikea|household/i, cat: "Household", conf: 0.75 },
+  { re: /rent|mortgage|landlord|property mgmt|hoa/i, cat: "Housing", conf: 0.9 },
+  { re: /electric|power|water|sewer|utility|pg&e|duke energy/i, cat: "Utilities", conf: 0.88 },
+  { re: /cvs|walgreens|pharmacy|medical|hospital|clinic|dental|doctor|evans hair/i, cat: "Healthcare", conf: 0.8 },
+  { re: /ulta|gnc|tarte cosmetics|bohme|maurices|buckle|ae retail|love olive/i, cat: "Personal Care", conf: 0.75 },
+  { re: /clothing|apparel|shoes|footwear|nike|adidas/i, cat: "Clothing, Shoes & Apparel", conf: 0.8 },
+  { re: /amazon(?! prime)|target|home depot|lowe'?s|ikea|household/i, cat: "Household", conf: 0.7 },
   { re: /uber(?!\s*eats)|lyft|parking|toll|transit|metro|bus pass|ferry/i, cat: "Transportation", conf: 0.85 },
+
+  // Non-spending / bank-generated noise
   { re: /added to account|account bonus/i, cat: "Income", conf: 0.9 },
-  { re: /interest deposit|interest paid|dividend/i, cat: "One-Time Income", conf: 0.9 },
+  { re: /interest deposit|interest paid|dividend/i, cat: "Interest Income", conf: 0.9 },
   { re: /interest rate change|rate change notice|apy change/i, cat: "Miscellaneous", conf: 0.9 },
   { re: /acctverify|account verification|verify.*deposit|micro.?deposit/i, cat: "Miscellaneous", conf: 0.9 },
-  { re: /payroll|direct dep|salary|employer|ach credit|deposit/i, cat: "Income", conf: 0.85 },
-  { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
+  { re: /overdraft fee|nsf fee|insufficient funds|monthly service fee|maintenance fee|atm fee/i, cat: "ATM & Bank Fees", conf: 0.9 },
+  { re: /atm w\/d|atm withdrawal/i, cat: "ATM Withdrawal / Cash", conf: 0.9 },
+
+  // Donations / tithing
+  { re: /jesuschrist donation|tithing|ward donation|church donation/i, cat: "Religious Contribution", conf: 0.92 },
+  { re: /donation|charity|nonprofit|red cross|goodwill/i, cat: "Charity & Donations", conf: 0.8 },
+
+  // Internal transfers — specific purpose keywords first, generic catch-all last
+  { re: /transfer.*\b(ins|insurance|acadia)\b/i, cat: "Insurance", conf: 0.75 },
+  { re: /transfer.*\bphone\b/i, cat: "Phone", conf: 0.75 },
   { re: /transfer to savings|safety net|emergency fund/i, cat: "Safety Net Contribution", conf: 0.8 },
+  { re: /transfer from x?\d+.*to.*savings/i, cat: "Transfer from Savings", conf: 0.7 },
+  { re: /transfer from x?\d+.*to.*checking/i, cat: "Transfer from Checking", conf: 0.7 },
+  { re: /^transfer (from|to) x?\d+/i, cat: "Transfer", conf: 0.7 },
+
+  { re: /payroll|direct dep|salary|employer|ach credit|paycheck/i, cat: "Income", conf: 0.85 },
+  { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
   { re: /capital one|credit one|payment thank you|card payment/i, cat: "Miscellaneous", conf: 0.6 }
 ];
 
