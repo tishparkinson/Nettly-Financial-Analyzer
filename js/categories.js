@@ -91,6 +91,8 @@ export const MERCHANT_RULES = [
   { re: /uber(?!\s*eats)|lyft|parking|toll|transit|metro|bus pass|ferry/i, cat: "Transportation", conf: 0.85 },
   { re: /added to account|account bonus/i, cat: "Income", conf: 0.9 },
   { re: /interest deposit|interest paid|dividend/i, cat: "One-Time Income", conf: 0.9 },
+  { re: /interest rate change|rate change notice|apy change/i, cat: "Miscellaneous", conf: 0.9 },
+  { re: /acctverify|account verification|verify.*deposit|micro.?deposit/i, cat: "Miscellaneous", conf: 0.9 },
   { re: /payroll|direct dep|salary|employer|ach credit|deposit/i, cat: "Income", conf: 0.85 },
   { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
   { re: /transfer to savings|safety net|emergency fund/i, cat: "Safety Net Contribution", conf: 0.8 },
