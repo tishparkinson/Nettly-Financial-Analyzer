@@ -89,6 +89,8 @@ export const MERCHANT_RULES = [
   { re: /cvs|walgreens|pharmacy|medical|hospital|clinic|dental|doctor/i, cat: "Healthcare", conf: 0.88 },
   { re: /amazon(?! prime)|target|home depot|lowe'?s|ikea|household/i, cat: "Household", conf: 0.75 },
   { re: /uber(?!\s*eats)|lyft|parking|toll|transit|metro|bus pass|ferry/i, cat: "Transportation", conf: 0.85 },
+  { re: /added to account|account bonus/i, cat: "Income", conf: 0.9 },
+  { re: /interest deposit|interest paid|dividend/i, cat: "One-Time Income", conf: 0.9 },
   { re: /payroll|direct dep|salary|employer|ach credit|deposit/i, cat: "Income", conf: 0.85 },
   { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
   { re: /transfer to savings|safety net|emergency fund/i, cat: "Safety Net Contribution", conf: 0.8 },
