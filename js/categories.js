@@ -3,6 +3,11 @@ export const CATEGORIES = [
   "Housing",
   "Utilities",
   "Insurance",
+  "Phone",
+  "Phone & Internet Bundle",
+  "Cable & TV Bundle",
+  "Cable & Home Security Bundle",
+  "Home Security",
   "Transportation",
   "Transportation Maintenance",
   "Groceries",
@@ -11,7 +16,6 @@ export const CATEGORIES = [
   "Coffee & Convenience",
   "Healthcare",
   "Personal Care",
-  "Clothing, Shoes & Apparel",
   "Education",
   "Childcare",
   "Pet Care",
@@ -25,13 +29,6 @@ export const CATEGORIES = [
   "Savings",
   "Safety Net Contribution",
   "One-Time Income",
-  "Interest Income",
-  "Transfer from Savings",
-  "Transfer from Checking",
-  "ATM & Bank Fees",
-  "ATM Withdrawal / Cash",
-  "Religious Contribution",
-  "Charity & Donations",
   "Miscellaneous",
   "Unknown"
 ];
@@ -41,6 +38,8 @@ export const NEEDS_CATEGORIES = new Set([
   "Housing",
   "Utilities",
   "Insurance",
+  "Phone",
+  "Phone & Internet Bundle",
   "Transportation",
   "Transportation Maintenance",
   "Groceries",
@@ -72,52 +71,6 @@ export const DEFAULT_TAGS = [
   "Gift Giving"
 ];
 
-// Suggested tags for Clothing, Shoes & Apparel transactions
-// Shown as quick-apply suggestions during week-by-week review
-export const TRANSPORTATION_TAGS = [
-  "Gas / Fuel",
-  "Tires",
-  "Oil Change",
-  "Vehicle Maintenance",
-  "Vehicle Repair",
-  "Car Wash",
-  "Parking",
-  "Toll",
-  "Registration / DMV",
-  "Insurance Payment",
-  "Ride Share",
-  "Public Transit",
-  "Vehicle Extras",
-  "Work Vehicle",
-];
-
-export const ATM_CASH_TAGS = [
-  "Groceries (Cash)",
-  "Dining (Cash)",
-  "Gas (Cash)",
-  "Kids / School",
-  "Entertainment",
-  "Personal Care (Cash)",
-  "Donations / Church",
-  "Household (Cash)",
-  "Tip / Gratuity",
-  "Unknown / Misc",
-];
-
-export const CLOTHING_TAGS = [
-  "For Me",
-  "For Partner",
-  "For Kids",
-  "For Baby",
-  "Work Clothes",
-  "School Clothes",
-  "Shoes",
-  "Workout Gear",
-  "Formal / Occasion",
-  "Seasonal",
-  "Gift"
-];
-
 /** Keyword → category, confidence 0–1 */
 export const MERCHANT_RULES = [
   { re: /netflix|spotify|hulu|disney\+|apple\.com\/bill|youtube premium|amazon prime/i, cat: "Subscriptions", conf: 0.98 },
@@ -128,23 +81,17 @@ export const MERCHANT_RULES = [
   { re: /shell|chevron|exxon|bp |mobil|gas station|fuel|ev charge|chargepoint/i, cat: "Transportation", conf: 0.94 },
   { re: /auto zone|oreilly|jiffy lube|oil change|tire|meineke|car wash/i, cat: "Transportation Maintenance", conf: 0.9 },
   { re: /geico|state farm|progressive|allstate|insurance/i, cat: "Insurance", conf: 0.93 },
-  { re: /at&t|verizon|t-mobile|comcast|xfinity|spectrum|internet|fybercom|centurylink/i, cat: "Utilities", conf: 0.9 },
+  { re: /at&t|verizon|t-mobile|t mobile|cricket wireless|metro pcs|boost mobile|mint mobile|us cellular|straight talk/i, cat: "Phone", conf: 0.9 },
+  { re: /comcast|xfinity|spectrum|internet|fybercom|centurylink/i, cat: "Utilities", conf: 0.9 },
+  { re: /adt|vivint|simplisafe|frontpoint|ring alarm|alarm\.com|home security/i, cat: "Home Security", conf: 0.9 },
   { re: /rent|mortgage|landlord|property mgmt|hoa/i, cat: "Housing", conf: 0.92 },
   { re: /electric|power|water|sewer|utility|pg&e|duke energy/i, cat: "Utilities", conf: 0.91 },
   { re: /cvs|walgreens|pharmacy|medical|hospital|clinic|dental|doctor/i, cat: "Healthcare", conf: 0.88 },
-  { re: /nordstrom|nordstrom rack|bloomingdales|bloomingdale|macys|macy's|dillards|dillard's|jcpenney|jc penney|belk |bealls|boscovs|lord.?taylor|saks fifth|neiman marcus|neiman |old navy|gap |gap kids|banana republic|h&m|zara |uniqlo|forever 21|shein |fashion nova|express |torrid|lane bryant|avenue |ashley stewart|american eagle|aerie |hollister|abercrombie|ae outfitters|francesca|chicos|chico's|white house black|whbm|ann taylor|loft |talbots|soma |coldwater creek|cato |maurices|dressbarn|dress barn|christopher.?banks|new york.?co|ny.?co |cache |wet seal|charlotte russe|buckle |the buckle|zumiez |pacsun|pacific sunwear|rue21|rei\b|lululemon|athleta|fabletics|vuori |alo yoga|under armour|columbia sportswear|the north face|north face|patagonia|outdoor voices|sweaty betty|clothing|apparel|tj maxx|tjmaxx|t\.j\.maxx|ross dress|ross stores|burlington coat|burlington stores|marshalls|tuesday morning|stein mart|bealls outlet|victoria.?s secret|savage x fenty|adore me|carters|carter's|oshkosh|osh kosh|gymboree|children.?place|baby gap|janie.?jack|hanna andersson|dickies|carhartt|davids bridal|david's bridal|azazie |kleinfeld|mens wearhouse|men's wearhouse|jos.?a.?bank|hot topic|spencers|spencer gifts|claires|claire's|bath.?body|bebe |guess |ralph lauren|polo ralph|tommy hilfiger|calvin klein|kate spade|michael kors|coach\b|fossil |vera bradley|dsw\b|shoe carnival|shoe dept|rack room shoes|foot locker|footlocker|kids foot locker|champs sports|finish line|journeys|shoe sensation|famous footwear|shoe show|bakers shoes|skechers|new balance|vans\b|converse|steve madden|aldo |nine west|naturalizer|boot barn|sheplers|cavenders|western wear|ugg |bobs shoes|crocs |dr martens|clarks |timberland|birkenstock|merrell |keen\b|salomon |brooks running|hoka |on running|asics |saucony|nike |adidas |reebok |puma |fila |champion /i, cat: "Clothing, Shoes & Apparel", conf: 0.90 },
   { re: /amazon(?! prime)|target|home depot|lowe'?s|ikea|household/i, cat: "Household", conf: 0.75 },
   { re: /uber(?!\s*eats)|lyft|parking|toll|transit|metro|bus pass|ferry/i, cat: "Transportation", conf: 0.85 },
   { re: /payroll|direct dep|salary|employer|ach credit|deposit/i, cat: "Income", conf: 0.85 },
-  { re: /interest paid|interest earned|dividend|interest credit|savings interest|apy|annual percentage yield/i, cat: "Interest Income", conf: 0.95 },
   { re: /venmo|zelle|cash app|reimburs|repayment|paid you/i, cat: "Income", conf: 0.7, reimbursement: true },
   { re: /transfer to savings|safety net|emergency fund/i, cat: "Safety Net Contribution", conf: 0.8 },
-  { re: /transfer from savings|savings transfer|xfer from sav|from savings/i, cat: "Transfer from Savings", conf: 0.95 },
-  { re: /transfer from checking|xfer from chk|from checking|checking transfer/i, cat: "Transfer from Checking", conf: 0.95 },
-  { re: /atm fee|non-network atm|out-of-network atm|foreign atm|atm surcharge|cash machine fee|atm withdrawal fee|bank fee|monthly fee|service fee|maintenance fee|overdraft fee|nsf fee|insufficient fund/i, cat: "ATM & Bank Fees", conf: 0.95 },
-  { re: /atm withdrawal|cash withdrawal|atm cash|atm dispense|withdrew cash|cash advance|atm debit|atm wd|atm-wd|withdrawal/i, cat: "ATM Withdrawal / Cash", conf: 0.90 },
-  { re: /tithe|tithing|church|diocese|parish|synagogue|mosque|temple|lds|latter.day|ward donation|fast offering|missionary fund/i, cat: "Religious Contribution", conf: 0.93 },
-  { re: /donation|donate|charity|charitable|goodwill|salvation army|red cross|habitat for humanity|united way|gofundme|npo|nonprofit|non-profit/i, cat: "Charity & Donations", conf: 0.9 },
   { re: /capital one|credit one|payment thank you|card payment/i, cat: "Miscellaneous", conf: 0.6 }
 ];
 
