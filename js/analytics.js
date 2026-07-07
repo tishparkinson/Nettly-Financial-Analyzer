@@ -149,6 +149,77 @@ export function averageTotalSpending(transactions, days = 45) {
  * "Miscellaneous" doesn't count here — that's a deliberate catch-all choice,
  * not an unresolved one.
  */
+/**
+ * Compares total cash withdrawn (ATM Withdrawal / Cash category) against
+ * total cash purchases actually logged (any transaction under a "Cash"
+ * account type — covers both the manual entry form and a pasted Cash
+ * account). The gap is money that left the bank with no visible destination.
+ */
+export function cashGapSummary(transactions) {
+  const withdrawals = transactions.filter((tx) => tx.category === "ATM Withdrawal / Cash" && tx.amount < 0);
+  const cashWithdrawn = withdrawals.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const logged = transactions.filter((tx) => tx.accountType === "Cash" && tx.amount < 0);
+  const cashLogged = logged.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const cashGap = Math.max(cashWithdrawn - cashLogged, 0);
+  const gapPct = cashWithdrawn > 0 ? Math.round((cashGap / cashWithdrawn) * 100) : null;
+
+  return {
+    cashWithdrawn: Math.round(cashWithdrawn),
+    cashLogged: Math.round(cashLogged),
+    cashGap: Math.round(cashGap),
+    gapPct,
+    hasWithdrawals: cashWithdrawn > 0
+  };
+}
+
+/**
+ * A single dollar-weighted % describing how complete someone's financial
+ * picture is — combining (a) how much of their real spending is still
+ * "Unknown" and (b) how much withdrawn cash has no logged destination.
+ * Deliberately scoped to bookkeeping completeness, not financial health —
+ * someone can be at 100% here while still overspending on wants, and that's
+ * fine; this measures whether the picture is visible, not whether it's good.
+ */
+export function completeFinancialPicture(transactions) {
+  const spendTx = transactions.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category));
+  const totalSpend = spendTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const unknownSpend = spendTx.filter((tx) => tx.category === "Unknown").reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const cashGap = cashGapSummary(transactions);
+
+  const totalMoneyOut = totalSpend + cashGap.cashGap;
+  const knownMoneyOut = totalSpend - unknownSpend;
+
+  const pct = totalMoneyOut > 0 ? Math.round((knownMoneyOut / totalMoneyOut) * 100) : 100;
+
+  return {
+    pct,
+    totalSpend: Math.round(totalSpend),
+    unknownSpend: Math.round(unknownSpend),
+    cashWithdrawn: cashGap.cashWithdrawn,
+    cashLogged: cashGap.cashLogged,
+    cashGap: cashGap.cashGap,
+    cashGapPct: cashGap.gapPct
+  };
+}
+
+/**
+ * Counts consecutive most-recent Safety Net updates where the balance grew.
+ * Computed fresh from history each time rather than incrementally stored,
+ * so it can never drift out of sync with the actual data.
+ */
+export function computeGrowthStreak(history) {
+  if (!history || history.length < 2) return 0;
+  let streak = 0;
+  for (let i = history.length - 1; i > 0; i--) {
+    if (history[i].balance > history[i - 1].balance) streak++;
+    else break;
+  }
+  return streak;
+}
+
 export function uncategorizedSummary(transactions, options = {}) {
   const pctThreshold = options.pctThreshold ?? 3;
   const merchantCountThreshold = options.merchantCountThreshold ?? 5;
