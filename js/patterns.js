@@ -240,6 +240,126 @@ export function paceComparison(transactions, windowDays) {
  * still included in the message for context (worsening / holding steady /
  * improving-but-still-high), it just doesn't gate whether this appears.
  */
+/**
+ * Groups historical debit transactions by merchant to find recurring,
+ * roughly-monthly-or-longer bills (average gap ≥20 days, reasonably
+ * regular), then buckets each into "already happened this cycle" or
+ * "expected before next payday but hasn't happened yet." This is the data
+ * behind the Safe Spending Until Payday transparency dropdown — showing the
+ * actual detected bills, not just a number, so the person can see for
+ * themselves whether anything's missing from the calculation.
+ */
+export function billsThisCycle(transactions) {
+  const cycle = detectPayCycle(transactions, 180);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
+  const now = new Date();
+
+  let currentCycleStart, nextPayday;
+  if (cycle && cycle.paydays.length) {
+    let cursor = new Date(cycle.paydays.at(-1));
+    // Walk forward from the last detected payday in cycle-length steps until
+    // we find the cycle that contains today.
+    for (let i = 0; i < 60; i++) {
+      const next = new Date(cursor); next.setDate(next.getDate() + cycleDays);
+      if (next > now) { currentCycleStart = cursor; nextPayday = next; break; }
+      cursor = next;
+    }
+  }
+  if (!currentCycleStart) {
+    currentCycleStart = new Date(now); currentCycleStart.setDate(currentCycleStart.getDate() - cycleDays);
+    nextPayday = new Date(now); nextPayday.setDate(nextPayday.getDate() + cycleDays);
+  }
+
+  const byMerchant = new Map();
+  for (const tx of transactions) {
+    if (tx.amount >= 0 || NON_SPEND_CATEGORIES.has(tx.category)) continue;
+    const m = tx.merchant || tx.description;
+    if (!byMerchant.has(m)) byMerchant.set(m, []);
+    byMerchant.get(m).push(tx);
+  }
+
+  const paidThisCycle = [];
+  const expectedNotYetPaid = [];
+
+  for (const [merchant, txs] of byMerchant) {
+    if (txs.length < 2) continue;
+    const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    const gaps = [];
+    for (let i = 1; i < sorted.length; i++) gaps.push(daysBetween(sorted[i].date, sorted[i - 1].date));
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    if (avgGap < 20) continue; // too frequent to be a "bill" (e.g. daily coffee) — this is about recurring obligations
+    const gapStdev = Math.sqrt(gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length);
+    if (gapStdev / avgGap > 0.5) continue; // too irregular to call a bill with any confidence
+
+    const last = sorted.at(-1);
+    const lastDate = new Date(last.date);
+    const expectedNext = new Date(lastDate); expectedNext.setDate(expectedNext.getDate() + Math.round(avgGap));
+
+    const entry = { merchant, category: last.category, amount: Math.round(Math.abs(last.amount)), lastDate: last.date, avgGapDays: Math.round(avgGap) };
+
+    if (lastDate >= currentCycleStart) {
+      paidThisCycle.push(entry);
+    } else if (expectedNext <= nextPayday) {
+      expectedNotYetPaid.push({ ...entry, expectedDate: expectedNext.toISOString().slice(0, 10) });
+    }
+  }
+
+  return {
+    cycleDays,
+    currentCycleStart: currentCycleStart.toISOString().slice(0, 10),
+    nextPayday: nextPayday.toISOString().slice(0, 10),
+    paidThisCycle: paidThisCycle.sort((a, b) => b.lastDate.localeCompare(a.lastDate)),
+    expectedNotYetPaid: expectedNotYetPaid.sort((a, b) => a.expectedDate.localeCompare(b.expectedDate))
+  };
+}
+
+/**
+ * A RANGE, not a single precise number — deliberately. Forecasting exact
+ * upcoming bills is inherently uncertain, and a false-precision number that
+ * turns out wrong is worse than an honest range. Conservative end assumes
+ * every detected upcoming bill lands at its usual amount; comfortable end
+ * gives some slack for bills that might be lower or already covered.
+ */
+export function safeSpendingUntilPayday(transactions) {
+  const bills = billsThisCycle(transactions);
+  const now = new Date();
+  const daysUntilPayday = Math.max(Math.ceil(daysBetween(bills.nextPayday, now)), 1);
+
+  const currentStart = new Date(bills.currentCycleStart);
+  const cycleTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= currentStart && d <= now; });
+
+  const incomeSoFar = cycleTx.filter((tx) => tx.amount > 0 && tx.category === "Income").reduce((s, tx) => s + tx.amount, 0);
+  const spentSoFar = cycleTx.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category)).reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const expectedBillsTotal = bills.expectedNotYetPaid.reduce((s, b) => s + b.amount, 0);
+
+  if (!incomeSoFar) {
+    return { available: false, reason: "Add income transactions to estimate safe spending until payday.", bills };
+  }
+
+  const conservative = incomeSoFar - spentSoFar - expectedBillsTotal;
+  const comfortable = incomeSoFar - spentSoFar - (expectedBillsTotal * 0.7);
+
+  return {
+    available: true,
+    daysUntilPayday,
+    nextPayday: bills.nextPayday,
+    incomeSoFar: Math.round(incomeSoFar),
+    spentSoFar: Math.round(spentSoFar),
+    expectedBillsTotal: Math.round(expectedBillsTotal),
+    rangeLow: Math.round(Math.max(conservative, 0)),
+    rangeHigh: Math.round(Math.max(comfortable, conservative, 0)),
+    bills
+  };
+}
+
+/**
+ * Finds the want-category furthest beyond its "Generous" guideline ceiling
+ * as a % of income. Flags it purely on being over guideline — a steady,
+ * unchanging habit still counts, since the point is surfacing overspending
+ * itself, not just changes in it. The trend vs. the previous pay cycle is
+ * still included in the message for context (worsening / holding steady /
+ * improving-but-still-high), it just doesn't gate whether this appears.
+ */
 export function worstOffendingWantCategory(transactions, windowDays) {
   const pace = paceComparison(transactions, windowDays);
   if (!pace.available) return { available: false, reason: pace.reason };
@@ -434,53 +554,62 @@ const MIN_MONTHLY_FREED = 10;
 const MAX_MONTHS_TO_GOAL = 36;
 
 /**
- * Generates concrete "cut category X by 20% → frees $Y/mo → reaches a $1,000
- * starter emergency fund in Z months" suggestions, one per top want-category
- * from last month's spending. Doesn't ask the person to pick one — shows
- * whichever ones are still realistic THIS month and lets them choose (or
- * not). A suggestion is dropped (not just flagged) if this month's spending
- * in that category has already exceeded what a 20%-lower month would allow —
- * no point suggesting a cut that's already off the table for this cycle.
+/**
+ * Generates concrete "cut category X by 20% → frees $Y/cycle → reaches a
+ * $1,000 starter emergency fund in Z months" suggestions, one per top
+ * want-category from the previous pay cycle. Uses the person's own detected
+ * pay-cycle length (weekly/biweekly/monthly) rather than calendar months —
+ * most people living paycheck to paycheck think in terms of "until my next
+ * payday," not "this calendar month." Doesn't ask the person to pick one —
+ * shows whichever ones are still realistic THIS cycle. A suggestion is
+ * dropped (not just flagged) if this cycle's spending in that category has
+ * already exceeded what a 20%-lower cycle would allow — no point suggesting
+ * a cut that's already off the table.
  */
 export function safetyNetBuilderSuggestions(transactions) {
-  const now = new Date();
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const cycle = detectPayCycle(transactions, 180);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
 
-  const lastMonthTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= lastMonthStart && d < thisMonthStart; });
-  if (!lastMonthTx.some((tx) => tx.amount < 0)) {
-    return { available: false, reason: "Need at least one full month of history to generate suggestions." };
+  const now = new Date();
+  const currentStart = new Date(now); currentStart.setDate(currentStart.getDate() - cycleDays);
+  const previousStart = new Date(now); previousStart.setDate(previousStart.getDate() - cycleDays * 2);
+
+  const previousCycleTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= previousStart && d < currentStart; });
+  if (!previousCycleTx.some((tx) => tx.amount < 0)) {
+    return { available: false, reason: `Need at least one full ${cycleDays}-day pay cycle of history to generate suggestions.` };
   }
 
-  const monthToDateTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= thisMonthStart && d < thisMonthEnd; });
+  const currentCycleTx = transactions.filter((tx) => new Date(tx.date) >= currentStart);
 
   const isWantSpend = (tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category);
 
   const wantsByCat = new Map();
-  for (const tx of lastMonthTx) if (isWantSpend(tx)) wantsByCat.set(tx.category, (wantsByCat.get(tx.category) || 0) + Math.abs(tx.amount));
+  for (const tx of previousCycleTx) if (isWantSpend(tx)) wantsByCat.set(tx.category, (wantsByCat.get(tx.category) || 0) + Math.abs(tx.amount));
 
-  const mtdByCat = new Map();
-  for (const tx of monthToDateTx) if (isWantSpend(tx)) mtdByCat.set(tx.category, (mtdByCat.get(tx.category) || 0) + Math.abs(tx.amount));
+  const currentByCat = new Map();
+  for (const tx of currentCycleTx) if (isWantSpend(tx)) currentByCat.set(tx.category, (currentByCat.get(tx.category) || 0) + Math.abs(tx.amount));
 
-  const monthlyIncome = estimateMonthlyIncome(transactions, 60);
+  const monthlyIncome = estimateMonthlyIncome(transactions, 90);
+  const cyclePeriod = cycleDays >= 25 ? "month" : cycleDays >= 12 ? "two weeks" : "week";
   const candidates = [];
 
   for (const [category, baselineAmt] of wantsByCat) {
-    const freedAmt = baselineAmt * SUGGESTION_CUT_PCT;
-    if (freedAmt < MIN_MONTHLY_FREED) continue;
+    const monthlyEquivBaseline = baselineAmt * (30 / cycleDays);
+    const freedAmt = baselineAmt * SUGGESTION_CUT_PCT; // per cycle
+    const monthlyEquivFreed = monthlyEquivBaseline * SUGGESTION_CUT_PCT;
+    if (monthlyEquivFreed < MIN_MONTHLY_FREED) continue;
 
     const reducedTarget = baselineAmt * (1 - SUGGESTION_CUT_PCT);
-    const mtdAmt = mtdByCat.get(category) || 0;
-    if (mtdAmt > reducedTarget) continue; // already spent past the reduced target — not reachable this month
+    const currentAmt = currentByCat.get(category) || 0;
+    if (currentAmt > reducedTarget) continue; // already spent past the reduced target — not reachable this cycle
 
-    const monthsToGoal = Math.ceil(SAFETY_NET_STARTER_GOAL / freedAmt);
+    const monthsToGoal = Math.ceil(SAFETY_NET_STARTER_GOAL / monthlyEquivFreed);
     if (monthsToGoal > MAX_MONTHS_TO_GOAL) continue;
 
     const guideline = BUDGET_GUIDELINES[category];
     let tier = null, overGuideline = false;
     if (guideline && monthlyIncome) {
-      const pctOfIncome = (baselineAmt / monthlyIncome) * 100;
+      const pctOfIncome = (monthlyEquivBaseline / monthlyIncome) * 100;
       const t = getSpendingTier(pctOfIncome, guideline);
       tier = t.tier; overGuideline = t.overGuideline;
     }
@@ -489,13 +618,14 @@ export function safetyNetBuilderSuggestions(transactions) {
     candidates.push({
       category,
       baselineAmt: Math.round(baselineAmt),
-      mtdAmt: Math.round(mtdAmt),
+      currentAmt: Math.round(currentAmt),
       cutPct: cutPctLabel,
       freedAmt: Math.round(freedAmt),
       monthsToGoal,
       tier,
       overGuideline,
-      summary: `Cutting ${category} by ${cutPctLabel}% would free about ${fmtMoney(freedAmt)}/mo — enough to build a $${SAFETY_NET_STARTER_GOAL} starter emergency fund in about ${monthsToGoal} month${monthsToGoal !== 1 ? "s" : ""}.`
+      cycleDays,
+      summary: `Cutting ${category} by ${cutPctLabel}% this ${cyclePeriod} would free about ${fmtMoney(freedAmt)} — enough to build a $${SAFETY_NET_STARTER_GOAL} starter emergency fund in about ${monthsToGoal} month${monthsToGoal !== 1 ? "s" : ""}.`
     });
   }
 
@@ -517,18 +647,16 @@ export function safetyNetBuilderSuggestions(transactions) {
  * increase to report anything at all.
  */
 export function incomeAllocationTrend(transactions) {
+  const cycle = detectPayCycle(transactions, 180);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
   const now = new Date();
-  const todayOfMonth = now.getDate();
-  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  // Compare only through today's day-of-month in every month, so a partial
-  // current month is never compared against full baseline months — that
-  // would make spending look artificially low just because the month isn't
-  // over yet.
-  const thisMonthPartialEnd = new Date(now.getFullYear(), now.getMonth(), todayOfMonth + 1);
-  const baselineMonths = [1, 2, 3].map((i) => {
-    const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const partialEnd = new Date(now.getFullYear(), now.getMonth() - i, todayOfMonth + 1);
-    return { start, end: partialEnd };
+
+  const currentStart = new Date(now); currentStart.setDate(currentStart.getDate() - cycleDays);
+  // Compare against up to 3 prior cycles, same length, immediately before the current one.
+  const baselineCycles = [1, 2, 3].map((i) => {
+    const start = new Date(now); start.setDate(start.getDate() - cycleDays * (i + 1));
+    const end = new Date(now); end.setDate(end.getDate() - cycleDays * i);
+    return { start, end };
   });
 
   const sumIn = (start, end, filterFn) =>
@@ -540,27 +668,27 @@ export function incomeAllocationTrend(transactions) {
   const isConvenience = (tx) => tx.amount < 0 && CONVENIENCE_TAX_CATEGORIES.has(tx.category);
   const isOtherWant = (tx) => tx.amount < 0 && tx.needWant === "want" && !CONVENIENCE_TAX_CATEGORIES.has(tx.category) && !NON_SPEND_CATEGORIES.has(tx.category);
 
-  const currentIncome = sumIn(thisMonthStart, thisMonthPartialEnd, isIncome);
-  const baselineIncomes = baselineMonths.map((m) => sumIn(m.start, m.end, isIncome));
-  const validBaselineIncomes = baselineIncomes.filter((v) => v > 0);
-  const baselineIncome = validBaselineIncomes.length ? validBaselineIncomes.reduce((a, b) => a + b, 0) / validBaselineIncomes.length : 0;
+  const currentIncome = sumIn(currentStart, now, isIncome);
+  const baselineIncomes = baselineCycles.map((c) => sumIn(c.start, c.end, isIncome)).filter((v) => v > 0);
+  const baselineIncome = baselineIncomes.length ? baselineIncomes.reduce((a, b) => a + b, 0) / baselineIncomes.length : 0;
 
   const deltaIncome = currentIncome - baselineIncome;
   if (!baselineIncome || deltaIncome < 50) {
     return { available: false, reason: "No significant income increase detected to trace." };
   }
 
-  const monthsWithData = baselineMonths.filter((m) =>
-    transactions.some((tx) => { const d = new Date(tx.date); return d >= m.start && d < m.end; })
+  const cyclesWithData = baselineCycles.filter((c) =>
+    transactions.some((tx) => { const d = new Date(tx.date); return d >= c.start && d < c.end; })
   );
   const avgOver = (filterFn) =>
-    monthsWithData.length ? monthsWithData.reduce((s, m) => s + sumIn(m.start, m.end, filterFn), 0) / monthsWithData.length : 0;
+    cyclesWithData.length ? cyclesWithData.reduce((s, c) => s + sumIn(c.start, c.end, filterFn), 0) / cyclesWithData.length : 0;
 
-  const deltaNeeds = sumIn(thisMonthStart, thisMonthPartialEnd, isNeedSpend) - avgOver(isNeedSpend);
-  const deltaConvenience = sumIn(thisMonthStart, thisMonthPartialEnd, isConvenience) - avgOver(isConvenience);
-  const deltaOtherWants = sumIn(thisMonthStart, thisMonthPartialEnd, isOtherWant) - avgOver(isOtherWant);
+  const deltaNeeds = sumIn(currentStart, now, isNeedSpend) - avgOver(isNeedSpend);
+  const deltaConvenience = sumIn(currentStart, now, isConvenience) - avgOver(isConvenience);
+  const deltaOtherWants = sumIn(currentStart, now, isOtherWant) - avgOver(isOtherWant);
   const deltaSavingsOrUnspent = deltaIncome - deltaNeeds - deltaConvenience - deltaOtherWants;
 
+  const cyclePeriod = cycleDays >= 25 ? "month" : cycleDays >= 12 ? "two weeks" : "week";
   const parts = [];
   if (Math.abs(deltaConvenience) >= 10) parts.push(`${fmtMoney(deltaConvenience)} to convenience spending`);
   if (Math.abs(deltaOtherWants) >= 10) parts.push(`${fmtMoney(deltaOtherWants)} to other wants`);
@@ -569,12 +697,13 @@ export function incomeAllocationTrend(transactions) {
 
   return {
     available: true,
+    cycleDays,
     deltaIncome: Math.round(deltaIncome),
     deltaNeeds: Math.round(deltaNeeds),
     deltaConvenience: Math.round(deltaConvenience),
     deltaOtherWants: Math.round(deltaOtherWants),
     deltaSavingsOrUnspent: Math.round(deltaSavingsOrUnspent),
-    summary: `Income is up ${fmtMoney(deltaIncome)}/mo vs. your recent average${parts.length ? ` — ${parts.join(", ")}.` : "."}`
+    summary: `Income is up ${fmtMoney(deltaIncome)} this ${cyclePeriod} vs. your recent average${parts.length ? ` — ${parts.join(", ")}.` : "."}`
   };
 }
 
