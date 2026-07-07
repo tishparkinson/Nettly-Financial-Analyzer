@@ -1,3 +1,5 @@
+import { BUDGET_GUIDELINES, getSpendingTier } from "./categories.js";
+
 // Client-side spending-pattern analysis. No external calls, no AI — just
 // arithmetic over transactions already in the browser. Every function returns
 // an `available` flag and, when false, a `reason` explaining why there isn't
@@ -92,12 +94,12 @@ export function dayOfWeekProfile(transactions, windowDays) {
 }
 
 /**
- * Detects recurring "payday" deposits and compares spend in the days right
- * after payday vs. the rest of the pay cycle. Needs at least 3 confidently-
- * spaced income deposits to report — irregular income is left alone rather
- * than forcing a pattern onto it.
+ * Detects a regular pay cycle from Income-category deposits. Returns null if
+ * there isn't enough regularly-spaced income data to trust a cycle length —
+ * callers should fall back to a fixed default window in that case rather
+ * than forcing a cycle onto irregular income.
  */
-export function paydayProximityEffect(transactions, windowDays, proximityDays = 3) {
+function detectPayCycle(transactions, windowDays) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
 
@@ -105,9 +107,7 @@ export function paydayProximityEffect(transactions, windowDays, proximityDays = 
     .filter((tx) => tx.amount > 0 && tx.category === "Income" && inWindow(tx, cutoff))
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  if (incomeTx.length < 3) {
-    return { available: false, reason: "Need at least 3 paycheck-style deposits in this window to detect a payday pattern." };
-  }
+  if (incomeTx.length < 3) return null;
 
   const gaps = [];
   for (let i = 1; i < incomeTx.length; i++) {
@@ -117,11 +117,27 @@ export function paydayProximityEffect(transactions, windowDays, proximityDays = 
   const gapVariance = gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length;
   const gapStdev = Math.sqrt(gapVariance);
 
-  if (avgGap === 0 || gapStdev / avgGap > 0.4) {
-    return { available: false, reason: "Income deposits don't land on a regular enough schedule yet to detect a payday effect." };
-  }
+  if (avgGap === 0 || gapStdev / avgGap > 0.4) return null;
 
-  const paydays = incomeTx.map((tx) => tx.date);
+  return { avgGapDays: avgGap, paydays: incomeTx.map((tx) => tx.date) };
+}
+
+/**
+ * Detects recurring "payday" deposits and compares spend in the days right
+ * after payday vs. the rest of the pay cycle. Needs at least 3 confidently-
+ * spaced income deposits to report — irregular income is left alone rather
+ * than forcing a pattern onto it.
+ */
+export function paydayProximityEffect(transactions, windowDays, proximityDays = 3) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+
+  const cycle = detectPayCycle(transactions, windowDays);
+  if (!cycle) {
+    return { available: false, reason: "Need at least 3 regularly-spaced paycheck-style deposits in this window to detect a payday pattern." };
+  }
+  const { paydays } = cycle;
+
   const spend = transactions.filter((tx) => isSpendTx(tx) && inWindow(tx, cutoff));
 
   const dayIsPostPayday = (dateStr) => {
@@ -150,7 +166,7 @@ export function paydayProximityEffect(transactions, windowDays, proximityDays = 
   return {
     available: true,
     paydayCount: paydays.length,
-    avgGapDays: Math.round(avgGap),
+    avgGapDays: Math.round(cycle.avgGapDays),
     postPaydayAvgPerDay: Math.round(postPaydayAvgPerDay),
     restOfCycleAvgPerDay: Math.round(restAvgPerDay),
     pctDiff,
@@ -163,6 +179,145 @@ export function paydayProximityEffect(transactions, windowDays, proximityDays = 
  * Month-over-month trend per category, compared against a rolling up-to-3-
  * month baseline. Needs at least 2 full months in-window to report.
  */
+/**
+ * Estimates monthly-equivalent income from Income-category deposits within
+ * the given window, scaled from whatever span of data is actually present.
+ */
+function estimateMonthlyIncome(transactions, windowDays) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+  const income = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income" && inWindow(tx, cutoff));
+  if (!income.length) return null;
+  const total = income.reduce((s, tx) => s + tx.amount, 0);
+  const spanDays = Math.max(daysBetween(new Date(), cutoff), 1);
+  return (total / spanDays) * 30;
+}
+
+/**
+ * Compares spending in the most recent pay cycle vs. the one before it, per
+ * category. Uses the person's own detected pay-cycle length (weekly,
+ * biweekly, monthly, etc.) instead of a fixed window, since "this week vs.
+ * last week" only makes sense for someone actually paid weekly. Falls back
+ * to a 30-day cycle when no regular pay pattern is detected.
+ */
+export function paceComparison(transactions, windowDays) {
+  const cycle = detectPayCycle(transactions, windowDays);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
+
+  const now = new Date();
+  const currentStart = new Date(now); currentStart.setDate(currentStart.getDate() - cycleDays);
+  const previousStart = new Date(now); previousStart.setDate(previousStart.getDate() - cycleDays * 2);
+
+  const spend = transactions.filter(isSpendTx);
+  const oldestDate = spend.reduce((min, tx) => (tx.date < min ? tx.date : min), spend[0]?.date || null);
+  if (!oldestDate || daysBetween(new Date(), oldestDate) < cycleDays * 2) {
+    return { available: false, reason: `Need at least two ${cycleDays}-day cycles of history to compare pace.`, cycleDays, usedDetectedCycle: Boolean(cycle) };
+  }
+
+  const byCategory = new Map();
+  for (const tx of spend) {
+    const d = new Date(tx.date);
+    const bucket = d >= currentStart ? "current" : (d >= previousStart ? "previous" : null);
+    if (!bucket) continue;
+    if (!byCategory.has(tx.category)) byCategory.set(tx.category, { current: 0, previous: 0 });
+    byCategory.get(tx.category)[bucket] += Math.abs(tx.amount);
+  }
+
+  const categories = [...byCategory.entries()].map(([category, v]) => {
+    const deltaAmt = Math.round(v.current - v.previous);
+    const deltaPct = v.previous > 0 ? Math.round(((v.current - v.previous) / v.previous) * 100) : (v.current > 0 ? 100 : null);
+    return { category, currentAmt: Math.round(v.current), previousAmt: Math.round(v.previous), deltaAmt, deltaPct };
+  }).sort((a, b) => Math.abs(b.deltaAmt) - Math.abs(a.deltaAmt));
+
+  return { available: true, cycleDays, usedDetectedCycle: Boolean(cycle), categories };
+}
+
+/**
+ * Finds the one want-category that's both (a) beyond its "Generous"
+ * guideline ceiling as a % of income, AND (b) trending worse vs. the
+ * previous pay cycle. Only flags something when both are true — over-
+ * guideline alone might just be a person's steady, chosen normal; trending
+ * worse alone might just be normal week-to-week noise. Together, they're
+ * worth surfacing.
+ */
+export function worstOffendingWantCategory(transactions, windowDays) {
+  const pace = paceComparison(transactions, windowDays);
+  if (!pace.available) return { available: false, reason: pace.reason };
+
+  const monthlyIncome = estimateMonthlyIncome(transactions, windowDays);
+  if (!monthlyIncome) {
+    return { available: false, reason: "Add income transactions to compare category spending against guidelines." };
+  }
+
+  const cycleIncome = monthlyIncome * (pace.cycleDays / 30);
+  const candidates = [];
+
+  for (const c of pace.categories) {
+    const guideline = BUDGET_GUIDELINES[c.category];
+    if (!guideline) continue;
+    if (c.currentAmt <= 0) continue;
+    const monthlyEquivalentAmt = c.currentAmt * (30 / pace.cycleDays);
+    const pctOfIncome = cycleIncome > 0 ? (c.currentAmt / cycleIncome) * 100 : (monthlyIncome > 0 ? (monthlyEquivalentAmt / monthlyIncome) * 100 : null);
+    if (pctOfIncome == null) continue;
+    const tier = getSpendingTier(pctOfIncome, guideline);
+    const trendingWorse = c.deltaAmt > 0;
+    if (tier.overGuideline && trendingWorse) {
+      candidates.push({
+        category: c.category,
+        currentAmt: c.currentAmt,
+        deltaAmt: c.deltaAmt,
+        deltaPct: c.deltaPct,
+        pctOfIncome: Math.round(pctOfIncome),
+        guidelineAim: guideline.aim,
+        cycleDays: pace.cycleDays
+      });
+    }
+  }
+
+  if (!candidates.length) {
+    return { available: false, reason: "No want-category is both over its usual guideline and trending worse right now." };
+  }
+
+  candidates.sort((a, b) => b.pctOfIncome - a.pctOfIncome);
+  const worst = candidates[0];
+  return {
+    available: true,
+    ...worst,
+    summary: `${worst.category}: ${fmtMoney(worst.currentAmt)} this ${worst.cycleDays >= 25 ? "month" : worst.cycleDays >= 12 ? "two weeks" : "week"} (${worst.pctOfIncome}% of income, above the usual ${worst.guidelineAim}% guideline) — and up ${fmtPct(worst.deltaPct)} from your last cycle.`
+  };
+}
+
+/**
+ * Overall wants spending as a % of income, using the same Careful/Standard/
+ * Generous tiers as individual categories. This is the always-visible
+ * headline badge — individual category detail lives in the drill-down.
+ */
+export function overallWantsTier(transactions, windowDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+
+  const wants = transactions.filter((tx) =>
+    tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category) && inWindow(tx, cutoff)
+  );
+  const wantsTotal = wants.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const monthlyIncome = estimateMonthlyIncome(transactions, windowDays);
+
+  if (!monthlyIncome) {
+    return { available: false, reason: "Add income transactions to see your overall wants tier." };
+  }
+
+  const spanMonths = Math.max(Math.min(windowDays, daysBetween(new Date(), cutoff)) / 30, 0.1);
+  const monthlyWants = wantsTotal / spanMonths;
+  const pctOfIncome = (monthlyWants / monthlyIncome) * 100;
+  const tier = getSpendingTier(pctOfIncome, BUDGET_GUIDELINES["Overall Wants"]);
+
+  return { available: true, monthlyWants: Math.round(monthlyWants), pctOfIncome: Math.round(pctOfIncome), ...tier };
+}
+
+function fmtMoney(n) {
+  return `$${Math.round(Math.abs(n)).toLocaleString()}`;
+}
+
 export function categoryTrends(transactions, windowDays) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
@@ -247,25 +402,40 @@ export function categoryShareDrift(transactions, windowDays) {
 
   const firstHalf = spend.filter((tx) => new Date(tx.date) < midpoint);
   const secondHalf = spend.filter((tx) => new Date(tx.date) >= midpoint);
+  const halfSpanMonths = Math.max((windowDays / 2) / 30, 0.1);
 
   function shareByCategory(txs) {
     const total = txs.reduce((s, tx) => s + Math.abs(tx.amount), 0) || 1;
     const byCat = new Map();
     for (const tx of txs) byCat.set(tx.category, (byCat.get(tx.category) || 0) + Math.abs(tx.amount));
     const shares = new Map();
-    for (const [cat, amt] of byCat) shares.set(cat, (amt / total) * 100);
-    return shares;
+    const amounts = new Map();
+    for (const [cat, amt] of byCat) {
+      shares.set(cat, (amt / total) * 100);
+      amounts.set(cat, amt / halfSpanMonths); // monthly-equivalent $ for fair comparison
+    }
+    return { shares, amounts };
   }
 
-  const firstShares = shareByCategory(firstHalf);
-  const secondShares = shareByCategory(secondHalf);
-  const categories = new Set([...firstShares.keys(), ...secondShares.keys()]);
+  const first = shareByCategory(firstHalf);
+  const second = shareByCategory(secondHalf);
+  const categories = new Set([...first.shares.keys(), ...second.shares.keys()]);
 
   const drift = [];
   for (const cat of categories) {
-    const before = firstShares.get(cat) || 0;
-    const after = secondShares.get(cat) || 0;
-    drift.push({ category: cat, sharePctBefore: Math.round(before), sharePctAfter: Math.round(after), deltaPts: Math.round(after - before) });
+    const before = first.shares.get(cat) || 0;
+    const after = second.shares.get(cat) || 0;
+    const amtBefore = first.amounts.get(cat) || 0;
+    const amtAfter = second.amounts.get(cat) || 0;
+    drift.push({
+      category: cat,
+      sharePctBefore: Math.round(before),
+      sharePctAfter: Math.round(after),
+      deltaPts: Math.round(after - before),
+      amtBeforeMonthly: Math.round(amtBefore),
+      amtAfterMonthly: Math.round(amtAfter),
+      deltaAmtMonthly: Math.round(amtAfter - amtBefore)
+    });
   }
   drift.sort((a, b) => Math.abs(b.deltaPts) - Math.abs(a.deltaPts));
 
@@ -413,6 +583,8 @@ export function analyzeSpendingPatterns(transactions, windowDays = 365) {
   const volatility = categoryVolatility(transactions, windowDays);
   const anomalies = detectAnomalies(transactions, windowDays);
   const sprees = detectSpendingSprees(transactions, windowDays);
+  const pace = paceComparison(transactions, windowDays);
+  const worstOffender = worstOffendingWantCategory(transactions, windowDays);
 
   const summaries = [];
   if (dayOfWeek.available && dayOfWeek.summary) summaries.push(dayOfWeek.summary);
@@ -421,14 +593,15 @@ export function analyzeSpendingPatterns(transactions, windowDays = 365) {
   if (trends.available) {
     const top = trends.trends.find((t) => t.pctChange != null && Math.abs(t.pctChange) >= 15);
     if (top) {
-      summaries.push(`${top.category} spending is ${fmtPct(top.pctChange)} ${top.pctChange >= 0 ? "higher" : "lower"} this month vs. your recent average.`);
+      const deltaAmt = top.current - top.baselineAvg;
+      summaries.push(`${top.category} spending is ${fmtMoney(deltaAmt)}/mo ${deltaAmt >= 0 ? "higher" : "lower"} (${fmtPct(top.pctChange)}) this month vs. your recent average.`);
     }
   }
 
   if (drift.available) {
     const top = drift.drift.find((d) => Math.abs(d.deltaPts) >= 5);
     if (top) {
-      summaries.push(`${top.category} has gone from ${top.sharePctBefore}% to ${top.sharePctAfter}% of your total spending over this window.`);
+      summaries.push(`${top.category} has gone from ${fmtMoney(top.amtBeforeMonthly)}/mo to ${fmtMoney(top.amtAfterMonthly)}/mo (${top.sharePctBefore}% → ${top.sharePctAfter}% of your total spending) over this window.`);
     }
   }
 
@@ -444,5 +617,5 @@ export function analyzeSpendingPatterns(transactions, windowDays = 365) {
     summaries.push(`${sprees.sprees.length} spending cluster${sprees.sprees.length > 1 ? "s" : ""} detected — 3+ discretionary purchases within 48 hours of each other.`);
   }
 
-  return { dayOfWeek, payday, trends, drift, volatility, anomalies, sprees, summaries, windowDays };
+  return { dayOfWeek, payday, trends, drift, volatility, anomalies, sprees, pace, worstOffender, summaries, windowDays };
 }
