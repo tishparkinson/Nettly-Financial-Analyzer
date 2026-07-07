@@ -207,6 +207,7 @@
         <div class="value" id="months-covered">—</div>
         <div class="label">MONTHS COVERED</div>
         <div class="peace">Peace of Mind</div>
+        <div class="small" id="months-covered-needs-sub" style="margin-top:0.35rem;color:var(--muted);"></div>
       </div>
 
       <div class="stat-row">
@@ -253,6 +254,42 @@
       <div class="card">
         <h3>Subscriptions observed</h3>
         <p class="small" id="subs-summary">—</p>
+      </div>
+
+      <div class="card" id="cash-entry-section">
+        <h3>Log a Cash Purchase</h3>
+        <p class="small">Cash purchases can't be tracked automatically — logging them here keeps your spending picture complete.</p>
+        <label>What did you buy?</label>
+        <input id="cash-entry-desc" placeholder="e.g. Haircut, farmers market, gas">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+          <div>
+            <label>Amount ($)</label>
+            <input id="cash-entry-amount" type="number" min="0" step="0.01" placeholder="0.00">
+          </div>
+          <div>
+            <label>Date</label>
+            <input id="cash-entry-date" type="date">
+          </div>
+        </div>
+        <label>Category</label>
+        <select id="cash-entry-category"></select>
+        <label>Need or Want?</label>
+        <select id="cash-entry-needwant">
+          <option value="need">Need</option>
+          <option value="want">Want</option>
+        </select>
+        <div id="cash-entry-owner-wrap" class="hidden">
+          <label>Whose purchase?</label>
+          <select id="cash-entry-owner">
+            <option value="primary">You</option>
+            <option value="secondary">Partner</option>
+            <option value="joint">Joint / household</option>
+          </select>
+        </div>
+        <label>Tags (optional)</label>
+        <div id="cash-entry-tag-chips" class="tag-chips"></div>
+        <button type="button" class="btn btn-secondary" id="btn-add-cash-entry">Log this purchase</button>
+        <p class="small hidden" id="cash-entry-confirm" style="color:var(--teal);font-weight:600;">✓ Logged.</p>
       </div>
 
       <div class="card">
