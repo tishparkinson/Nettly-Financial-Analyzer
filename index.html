@@ -275,6 +275,20 @@
       </div>
 
       <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+          <h3 style="margin:0;">Spending Patterns</h3>
+          <select id="analysis-window-select" style="width:auto;margin:0;font-size:0.82rem;padding:0.3rem 0.5rem;">
+            <option value="60">Last 2 months</option>
+            <option value="90">Last 3 months</option>
+            <option value="180">Last 6 months</option>
+            <option value="365" selected>Last year</option>
+          </select>
+        </div>
+        <p class="small" style="margin-top:0.35rem;">Timing, trends, and unusual charges — calculated directly from your transactions, no AI involved.</p>
+        <div id="pattern-insights-list"></div>
+      </div>
+
+      <div class="card">
         <h3>Review &amp; Fix Categories</h3>
         <p class="small">Change a category here and it applies to all transactions from that merchant.</p>
         <div id="cat-review-list"></div>
