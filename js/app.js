@@ -15,7 +15,8 @@ import {
   updateStreaks,
   updateRecords,
   filterByPerson,
-  tagSummaries
+  tagSummaries,
+  uncategorizedSummary
 } from "./analytics.js";
 import { analyzeSpendingPatterns, overallWantsTier, worstOffendingWantCategory } from "./patterns.js";
 import {
@@ -363,7 +364,7 @@ function renderMerchantReview(review, unknownPct = 0) {
       <strong>${escapeHtml(g.merchant)}</strong>
       <span class="small"> — seen ${g.count} time${g.count > 1 ? "s" : ""}</span>
       <label>Category (applies to all)</label>
-      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === "Unknown" ? "" : ""}>${cat}</option>`).join("")}</select>
+      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === "Unknown" ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}</select>
     </div>
   `).join("");
 }
@@ -384,7 +385,13 @@ document.getElementById("btn-merchants-done").addEventListener("click", () => {
   });
   saveState(state);
   maybeShowAtmCashAlert(chosenCats);
-  startWeeklyReview();
+  if (merchantReviewReturnsToDashboard) {
+    merchantReviewReturnsToDashboard = false;
+    renderDashboard();
+    show("dashboard");
+  } else {
+    startWeeklyReview();
+  }
 });
 
 
@@ -1171,9 +1178,11 @@ function renderCantMissZone(txs) {
     detailEl.textContent = `${fmtMoney(overall.monthlyWants)}/mo on wants (${overall.pctOfIncome}% of income). Careful ≤${Math.round(overall.careful)}% · Standard ≤${Math.round(overall.standard)}% · Generous ≤${Math.round(overall.generous)}%.`;
   }
 
-  // Only fires when a category is BOTH over its own guideline AND trending
-  // worse vs. the last pay cycle — a steady (even if high) habit doesn't
-  // trigger this, since that's a "your own normal" situation, not a change.
+  // Fires whenever a want-category is over its own Generous guideline —
+  // including a steady, unchanging habit. The point is to surface
+  // overspending itself, not just changes in it; trend direction is still
+  // mentioned in the message for context, it just doesn't gate whether this
+  // shows up at all.
   const worst = worstOffendingWantCategory(txs, 90);
   if (worst.available) {
     alertEl.classList.remove("hidden");
@@ -1182,7 +1191,33 @@ function renderCantMissZone(txs) {
     alertEl.classList.add("hidden");
     alertEl.textContent = "";
   }
+
+  const uncatEl = document.getElementById("uncategorized-alert");
+  const uncatTextEl = document.getElementById("uncategorized-text");
+  if (uncatEl && uncatTextEl) {
+    const uncat = uncategorizedSummary(state.transactions);
+    if (uncat.unknownMerchantCount > 0) {
+      uncatEl.classList.remove("hidden");
+      uncatEl.style.background = uncat.shouldHighlight ? "#fdecec" : "#f4f6f7";
+      uncatEl.style.border = uncat.shouldHighlight ? "1px solid #f0b8b8" : "1px solid var(--border)";
+      uncatEl.style.color = uncat.shouldHighlight ? "#8a2c2c" : "var(--muted)";
+      uncatTextEl.textContent =
+        `${uncat.unknownMerchantCount} merchant${uncat.unknownMerchantCount > 1 ? "s" : ""} (${uncat.unknownTxCount} transaction${uncat.unknownTxCount > 1 ? "s" : ""}) still need${uncat.unknownMerchantCount > 1 ? "" : "s"} a category — ` +
+        `about ${fmtMoney(uncat.unknownSpend)} (${uncat.pctOfSpend}% of your spending) isn't reflected anywhere yet.`;
+    } else {
+      uncatEl.classList.add("hidden");
+    }
+  }
 }
+
+let merchantReviewReturnsToDashboard = false;
+
+document.getElementById("btn-categorize-now")?.addEventListener("click", () => {
+  merchantReviewReturnsToDashboard = true;
+  const review = merchantsNeedingReview(state.transactions);
+  renderMerchantReview(review, 0);
+  show("merchants");
+});
 
 function renderDashboard() {
   const txs = getFilteredTransactions();
