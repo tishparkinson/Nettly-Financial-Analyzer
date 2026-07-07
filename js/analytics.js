@@ -27,24 +27,15 @@ export function merchantsNeedingReview(transactions, threshold = 0.8) {
   return [...groups.values()].sort((a, b) => b.count - a.count);
 }
 
-
-/**
- * Detect recurring transactions within a 45-day window.
- * Looks for 2+ charges from the same merchant at approximately the same amount
- * spaced ~monthly (25–35 days), ~biweekly (12–16 days), or ~weekly (6–8 days).
- * Returns a Map keyed by tx.id → { isRecurring, interval, lastDate, lastAmt }
- */
 export function detectRecurring45(transactions) {
   const debits = transactions
     .filter((tx) => tx.amount < 0)
     .sort((a, b) => a.date.localeCompare(b.date));
 
-  // Group by merchant + rounded amount (within 5% or $2)
   const groups = new Map();
   for (const tx of debits) {
     const amt = Math.abs(tx.amount);
     const merchant = tx.merchant || (tx.description || "").slice(0, 30).toUpperCase();
-    // Try to match an existing group
     let matched = false;
     for (const [key, g] of groups) {
       if (g.merchant !== merchant) continue;
@@ -67,7 +58,7 @@ export function detectRecurring45(transactions) {
     { name: "weekly",    min:  6, max:  8 },
   ];
 
-  const result = new Map(); // tx.id → { isRecurring, interval, lastDate, lastAmt }
+  const result = new Map();
 
   for (const g of groups.values()) {
     if (g.entries.length < 2) continue;
@@ -79,14 +70,12 @@ export function detectRecurring45(transactions) {
       const days = (new Date(curr.date) - new Date(prev.date)) / 86400000;
       const interval = INTERVALS.find((iv) => days >= iv.min && days <= iv.max);
       if (interval) {
-        // Mark current as recurring, note the previous as evidence
         result.set(curr.id, {
           isRecurring: true,
           interval: interval.name,
           lastDate: prev.date,
           lastAmt: prev.amt,
         });
-        // Also mark previous as recurring if not already
         if (!result.has(prev.id)) {
           result.set(prev.id, {
             isRecurring: true,
@@ -102,14 +91,24 @@ export function detectRecurring45(transactions) {
   return result;
 }
 
+// Categories that represent money moving around (or being withdrawn as cash
+// whose ultimate destination is unknown) rather than being spent on
+// something identifiable. ATM Withdrawal / Cash is treated the same as an
+// internal transfer: the withdrawal itself isn't a purchase — the purchase
+// happens later, invisibly, unless logged manually.
+const NON_SPEND_CATEGORIES = new Set([
+  "Safety Net Contribution", "Savings", "Transfer from Savings", "Transfer from Checking",
+  "Transfer", "ATM Withdrawal / Cash", "Income", "Interest Income", "One-Time Income"
+]);
+
 export function averageNeedsSpending(transactions, days = 45) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
   const needs = transactions.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (tx.isReimbursement) return false;
-    if (tx.isOneTime) return false; // exclude one-time expenses from monthly average
-    if (tx.category === "Safety Net Contribution" || tx.category === "Savings" || tx.category === "Transfer from Savings" || tx.category === "Transfer from Checking") return false;
+    if (tx.isOneTime) return false;
+    if (NON_SPEND_CATEGORIES.has(tx.category)) return false;
     return tx.needWant === "need" || isNeedCategory(tx.category);
   });
   const inWindow = needs.filter((tx) => new Date(tx.date) >= cutoff);
@@ -118,9 +117,31 @@ export function averageNeedsSpending(transactions, days = 45) {
   return months > 0 ? total / months : 0;
 }
 
-export function computeMonthsCovered(safetyNetBalance, avgNeedsMonthly) {
-  if (!avgNeedsMonthly || avgNeedsMonthly <= 0) return null;
-  return safetyNetBalance / avgNeedsMonthly;
+/**
+ * Same idea as averageNeedsSpending, but includes both needs AND wants —
+ * i.e. normal everyday spending, not just bare-essentials survival spending.
+ * This is the basis for the headline Months Covered figure: "how long could
+ * I keep living normally" rather than "how long could I merely survive."
+ */
+export function averageTotalSpending(transactions, days = 45) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - days);
+  const spend = transactions.filter((tx) => {
+    if (tx.amount >= 0) return false;
+    if (tx.isReimbursement) return false;
+    if (tx.isOneTime) return false;
+    if (NON_SPEND_CATEGORIES.has(tx.category)) return false;
+    return true;
+  });
+  const inWindow = spend.filter((tx) => new Date(tx.date) >= cutoff);
+  const total = inWindow.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const months = days / 30;
+  return months > 0 ? total / months : 0;
+}
+
+export function computeMonthsCovered(safetyNetBalance, avgSpendingMonthly) {
+  if (!avgSpendingMonthly || avgSpendingMonthly <= 0) return null;
+  return safetyNetBalance / avgSpendingMonthly;
 }
 
 export function needsVsWants(transactions, days = 90) {
@@ -131,7 +152,8 @@ export function needsVsWants(transactions, days = 90) {
   for (const tx of transactions) {
     if (tx.amount >= 0) continue;
     if (new Date(tx.date) < cutoff) continue;
-    if (tx.category === "Safety Net Contribution") continue;
+    if (tx.isOneTime) continue;
+    if (NON_SPEND_CATEGORIES.has(tx.category)) continue;
     const abs = Math.abs(tx.amount);
     if (tx.needWant === "need") needs += abs;
     else wants += abs;
@@ -265,7 +287,6 @@ export function updateRecords(state, monthsCovered, safetyNetBalance) {
   return records;
 }
 
-/** Filter transactions for couples dashboard view. */
 export function filterByPerson(transactions, accountOwners, filter, partners) {
   if (!filter || filter === "combined") return transactions;
   return transactions.filter((tx) => {
@@ -276,7 +297,6 @@ export function filterByPerson(transactions, accountOwners, filter, partners) {
   });
 }
 
-/** Sum spending per tag (absolute debits). */
 export function tagSummaries(transactions, days = 90) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - days);
