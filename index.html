@@ -217,10 +217,28 @@
           <span id="wants-tier-badge"></span>
         </div>
         <p class="small" id="wants-tier-detail" style="margin-top:0.3rem;"></p>
-        <div id="worst-offender-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;font-size:0.85rem;color:#7a5000;"></div>
+        <details style="margin-top:0.3rem;">
+          <summary style="font-size:0.76rem;color:var(--muted);cursor:pointer;list-style:none;">▸ View history</summary>
+          <div id="wants-tier-history" style="margin-top:0.4rem;font-size:0.8rem;"></div>
+        </details>
+
+        <div id="worst-offender-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;font-size:0.85rem;color:#7a5000;">
+          <div id="worst-offender-text"></div>
+          <details style="margin-top:0.35rem;">
+            <summary style="font-size:0.74rem;color:#7a5000;cursor:pointer;list-style:none;">▸ View history</summary>
+            <div id="worst-offender-history" style="margin-top:0.35rem;font-size:0.8rem;color:#7a5000;"></div>
+          </details>
+        </div>
+
         <div id="uncategorized-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;border-radius:8px;font-size:0.85rem;">
           <span id="uncategorized-text"></span>
           <button type="button" class="btn btn-secondary" id="btn-categorize-now" style="width:auto;margin:0.4rem 0 0;padding:0.35rem 0.8rem;font-size:0.82rem;">Categorize now →</button>
+        </div>
+
+        <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+          <span style="font-size:0.82rem;color:var(--muted);">% Complete financial picture: </span>
+          <strong id="completeness-pct" style="color:var(--navy);">—</strong>
+          <p class="small" id="completeness-detail" style="margin-top:0.2rem;"></p>
         </div>
       </div>
 
@@ -263,6 +281,16 @@
         </div>
         <p class="small"><span id="needs-amt">Needs $0</span> · <span id="wants-amt">Wants $0</span></p>
         <div id="nw-detail"></div>
+      </div>
+
+      <div class="card">
+        <h3>Here's What To Do</h3>
+        <p class="small">Concrete options, calculated from your own numbers — no single "right" choice, just what's realistic this month.</p>
+        <div id="safety-net-suggestions"></div>
+        <div id="convenience-tax-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <div id="impulse-spending-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <div id="income-allocation-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <div id="small-purchase-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
       </div>
 
       <div class="card">
