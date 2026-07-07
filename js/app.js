@@ -16,9 +16,23 @@ import {
   updateRecords,
   filterByPerson,
   tagSummaries,
-  uncategorizedSummary
+  uncategorizedSummary,
+  cashGapSummary,
+  completeFinancialPicture,
+  computeGrowthStreak
 } from "./analytics.js";
-import { analyzeSpendingPatterns, overallWantsTier, worstOffendingWantCategory } from "./patterns.js";
+import {
+  analyzeSpendingPatterns,
+  overallWantsTier,
+  worstOffendingWantCategory,
+  topWantCategoryByMonth,
+  overallWantsTierByMonth,
+  convenienceTax,
+  safetyNetBuilderSuggestions,
+  incomeAllocationTrend,
+  smallPurchaseBlindness,
+  detectSpendingSprees
+} from "./patterns.js";
 import {
   loadState,
   saveState,
@@ -1178,18 +1192,44 @@ function renderCantMissZone(txs) {
     detailEl.textContent = `${fmtMoney(overall.monthlyWants)}/mo on wants (${overall.pctOfIncome}% of income). Careful ≤${Math.round(overall.careful)}% · Standard ≤${Math.round(overall.standard)}% · Generous ≤${Math.round(overall.generous)}%.`;
   }
 
+  const wantsHistoryEl = document.getElementById("wants-tier-history");
+  if (wantsHistoryEl) {
+    const history = overallWantsTierByMonth(state.transactions, 6);
+    wantsHistoryEl.innerHTML = history.map((m) => {
+      if (!m.available) return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;color:var(--muted);">${escapeHtml(m.label)}<span>No income data</span></div>`;
+      const color = m.overGuideline ? "#c0392b" : (tierColors[m.tier] || "var(--muted)");
+      return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;">
+        <span>${escapeHtml(m.label)}</span>
+        <span>${fmtMoney(m.amount)}/mo · ${m.pctOfIncome}% · <span style="color:${color};font-weight:600;">${m.overGuideline ? "Over Guideline" : m.tier}</span></span>
+      </div>`;
+    }).join("");
+  }
+
   // Fires whenever a want-category is over its own Generous guideline —
   // including a steady, unchanging habit. The point is to surface
   // overspending itself, not just changes in it; trend direction is still
   // mentioned in the message for context, it just doesn't gate whether this
   // shows up at all.
   const worst = worstOffendingWantCategory(txs, 90);
+  const worstTextEl = document.getElementById("worst-offender-text");
   if (worst.available) {
     alertEl.classList.remove("hidden");
-    alertEl.textContent = worst.summary;
+    if (worstTextEl) worstTextEl.textContent = worst.summary;
   } else {
     alertEl.classList.add("hidden");
-    alertEl.textContent = "";
+    if (worstTextEl) worstTextEl.textContent = "";
+  }
+
+  const worstHistoryEl = document.getElementById("worst-offender-history");
+  if (worstHistoryEl) {
+    const history = topWantCategoryByMonth(state.transactions, 6);
+    worstHistoryEl.innerHTML = history.map((m) => {
+      if (!m.available) return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;">${escapeHtml(m.label)}<span>No want spending</span></div>`;
+      return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;">
+        <span>${escapeHtml(m.label)}</span>
+        <span>${escapeHtml(m.topCategory)} · ${fmtMoney(m.amount)}${m.pctOfIncome != null ? ` · ${m.pctOfIncome}% income` : ""}</span>
+      </div>`;
+    }).join("");
   }
 
   const uncatEl = document.getElementById("uncategorized-alert");
@@ -1208,6 +1248,19 @@ function renderCantMissZone(txs) {
       uncatEl.classList.add("hidden");
     }
   }
+
+  const completenessPctEl = document.getElementById("completeness-pct");
+  const completenessDetailEl = document.getElementById("completeness-detail");
+  if (completenessPctEl && completenessDetailEl) {
+    const complete = completeFinancialPicture(state.transactions);
+    completenessPctEl.textContent = `${complete.pct}%`;
+    const parts = [];
+    if (complete.unknownSpend > 0) parts.push(`${fmtMoney(complete.unknownSpend)} uncategorized`);
+    if (complete.cashGap > 0) parts.push(`${fmtMoney(complete.cashGap)} in withdrawn cash not yet logged`);
+    completenessDetailEl.textContent = parts.length
+      ? `Gaps: ${parts.join(" · ")}.`
+      : "Your spending picture is fully accounted for.";
+  }
 }
 
 let merchantReviewReturnsToDashboard = false;
@@ -1218,6 +1271,87 @@ document.getElementById("btn-categorize-now")?.addEventListener("click", () => {
   renderMerchantReview(review, 0);
   show("merchants");
 });
+
+function renderWhatToDo(txs) {
+  // Safety Net Builder Suggestions — Biggest Opportunity + up to 2 more
+  const suggEl = document.getElementById("safety-net-suggestions");
+  if (suggEl) {
+    const result = safetyNetBuilderSuggestions(state.transactions);
+    if (!result.available) {
+      suggEl.innerHTML = `<p class="small">${escapeHtml(result.reason || "Add more history to see suggestions here.")}</p>`;
+    } else {
+      suggEl.innerHTML = result.suggestions.map((s, i) => {
+        const label = i === 0 ? "Your Biggest Opportunity" : "Also worth considering";
+        const tierBadge = s.tier
+          ? `<span style="font-size:0.68rem;font-weight:700;padding:0.1rem 0.4rem;border-radius:999px;margin-left:0.4rem;color:#fff;background:${s.overGuideline ? "#c0392b" : "#3a6ea5"};">${s.overGuideline ? "Over Guideline" : s.tier}</span>`
+          : "";
+        return `<div style="margin:${i === 0 ? "0" : "0.6rem"} 0 0.6rem;padding:0.65rem 0.75rem;background:${i === 0 ? "#e8f4f4" : "#f8f9fa"};border:1px solid ${i === 0 ? "#c5dede" : "var(--border)"};border-radius:8px;">
+          <div style="font-size:0.72rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:0.02em;">${label}</div>
+          <div style="font-size:0.88rem;color:var(--navy);margin-top:0.2rem;">${escapeHtml(s.category)}${tierBadge}</div>
+          <p class="small" style="margin-top:0.25rem;">${escapeHtml(s.summary)} <span style="color:var(--muted);">(you're at ${fmtMoney(s.mtdAmt)} of ${fmtMoney(s.baselineAmt)} typical so far this month.)</span></p>
+        </div>`;
+      }).join("");
+    }
+  }
+
+  // Convenience Tax
+  const convEl = document.getElementById("convenience-tax-callout");
+  if (convEl) {
+    const conv = convenienceTax(txs, 30);
+    if (conv.available) {
+      convEl.classList.remove("hidden");
+      convEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Convenience Tax</div>
+        <p class="small" style="margin-top:0.2rem;">${fmtMoney(conv.monthlyAmt)}/mo${conv.pctOfIncome != null ? ` (${conv.pctOfIncome}% of income)` : ""} — the cost of dining out, fast food, coffee stops, and bank fees combined.
+        ${conv.breakdown.length ? conv.breakdown.map((b) => `${escapeHtml(b.category)}: ${fmtMoney(b.monthlyAmt)}`).join(" · ") : ""}</p>`;
+    } else {
+      convEl.classList.add("hidden");
+    }
+  }
+
+  // Impulse Spending (relabeled spending-spree detector — no new math)
+  const impulseEl = document.getElementById("impulse-spending-callout");
+  if (impulseEl) {
+    const sprees = detectSpendingSprees(txs, 90);
+    if (sprees.available) {
+      impulseEl.classList.remove("hidden");
+      const top = sprees.sprees[0];
+      impulseEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Impulse Spending</div>
+        <p class="small" style="margin-top:0.2rem;">${sprees.sprees.length} cluster${sprees.sprees.length > 1 ? "s" : ""} of 3+ purchases within 48 hours in the last 90 days — most recent: ${escapeHtml(top.startDate)}${top.startDate !== top.endDate ? "–" + escapeHtml(top.endDate) : ""}, ${top.count} purchases, ${fmtMoney(top.total)} total.</p>`;
+    } else {
+      impulseEl.classList.add("hidden");
+    }
+  }
+
+  // Income Allocation Trend ("where did the raise go")
+  const incomeEl = document.getElementById("income-allocation-callout");
+  if (incomeEl) {
+    const trend = incomeAllocationTrend(state.transactions);
+    if (trend.available) {
+      incomeEl.classList.remove("hidden");
+      incomeEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Where Did the Extra Income Go?</div>
+        <p class="small" style="margin-top:0.2rem;">${escapeHtml(trend.summary)}</p>`;
+    } else {
+      incomeEl.classList.add("hidden");
+    }
+  }
+
+  // Small-purchase blindness (≤$15)
+  const smallEl = document.getElementById("small-purchase-callout");
+  if (smallEl) {
+    const small = smallPurchaseBlindness(state.transactions, 15);
+    if (small.available) {
+      smallEl.classList.remove("hidden");
+      smallEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Small Purchases Add Up</div>
+        <p class="small" style="margin-top:0.2rem;">Purchases $15 and under: ${fmtMoney(small.weekTotal)} this week (${small.weekCount}), ${fmtMoney(small.monthTotal)} this month (${small.monthCount}).</p>`;
+    } else {
+      smallEl.classList.add("hidden");
+    }
+  }
+}
 
 function renderDashboard() {
   const txs = getFilteredTransactions();
@@ -1245,7 +1379,7 @@ function renderDashboard() {
       : "";
   }
   document.getElementById("sn-current").textContent = fmtMoney(total);
-  document.getElementById("growth-streak").textContent = String(state.streaks?.growthStreak || 0);
+  document.getElementById("growth-streak").textContent = String(computeGrowthStreak(state.safetyNetHistory));
   document.getElementById("checkin-streak").textContent = String(state.streaks?.weeklyCheckIn || 0);
   document.getElementById("stability-label").textContent = stability;
 
@@ -1305,6 +1439,7 @@ function renderDashboard() {
   populateCashEntryCategoryOptions();
   renderCashEntryTagChips();
   syncCashEntryOwnerVisibility();
+  renderWhatToDo(txs);
 
   renderCategoryReview(txs);
   renderTags(txs);
