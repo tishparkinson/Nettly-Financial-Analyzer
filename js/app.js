@@ -407,6 +407,7 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   const review = merchantsNeedingReview(state.transactions);
   // Force review if many unknowns OR if any merchants need review
   if (review.length || unknownPct > 0.15) {
+    merchantReviewDoneCount = 0;
     renderMerchantReview(review, unknownPct);
     show("merchants");
   } else {
@@ -417,6 +418,7 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 
 // --- Merchants ---
 const MERCHANT_REVIEW_BATCH_SIZE = 8;
+let merchantReviewDoneCount = 0; // cumulative across batches, for the "nice, X done!" framing
 
 function renderMerchantReview(review, unknownPct = 0) {
   const container = document.getElementById("merchant-list");
@@ -436,7 +438,11 @@ function renderMerchantReview(review, unknownPct = 0) {
   allReview.sort((a, b) => b.count - a.count);
 
   const batch = allReview.slice(0, MERCHANT_REVIEW_BATCH_SIZE);
-  const deferredCount = allReview.length - batch.length;
+  const remainingAfterBatch = allReview.length - batch.length;
+
+  const accomplishedHtml = merchantReviewDoneCount > 0
+    ? `<p class="small" style="color:var(--teal);font-weight:600;margin-bottom:0.5rem;">✓ ${merchantReviewDoneCount} categorized so far.</p>`
+    : "";
 
   const warningHtml = unknownPct > 0.15
     ? `<div style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.75rem 1rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;">
@@ -445,11 +451,11 @@ function renderMerchantReview(review, unknownPct = 0) {
        </div>`
     : "";
 
-  const deferredHtml = deferredCount > 0
-    ? `<p class="small" style="margin-top:0.5rem;">+${deferredCount} more merchant${deferredCount > 1 ? "s" : ""} with fewer transactions — we'll remind you about those from the dashboard once you're set up, so this doesn't turn into a marathon.</p>`
+  const deferredHtml = remainingAfterBatch > 0
+    ? `<p class="small" style="margin-top:0.5rem;">${remainingAfterBatch} more after this batch — do as many rounds as you'd like, or stop anytime and pick it up later from the dashboard.</p>`
     : "";
 
-  container.innerHTML = warningHtml +
+  container.innerHTML = accomplishedHtml + warningHtml +
     `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
       <span class="small" id="merchant-review-progress-label">0 of ${batch.length} set</span>
     </div>
@@ -464,6 +470,9 @@ function renderMerchantReview(review, unknownPct = 0) {
       <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === (g.category || "Unknown") ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}</select>
     </div>
   `).join("") + deferredHtml;
+
+  const moreBtn = document.getElementById("btn-merchants-more");
+  if (moreBtn) moreBtn.style.display = remainingAfterBatch > 0 ? "block" : "none";
 
   updateMerchantReviewProgress();
   container.querySelectorAll(".merchant-cat").forEach((sel) => {
@@ -485,22 +494,36 @@ function updateMerchantReviewProgress() {
   if (bar) bar.style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : "0%";
 }
 
-document.getElementById("btn-merchants-done").addEventListener("click", () => {
+/** Saves whatever the current batch's dropdowns are set to. Returns how many rows were saved. */
+function saveCurrentMerchantBatch() {
   const chosenCats = [];
-  document.querySelectorAll(".merchant-review").forEach((row) => {
+  const rows = document.querySelectorAll(".merchant-review");
+  rows.forEach((row) => {
     const merchant = row.dataset.merchant;
     const cat = row.querySelector(".merchant-cat").value;
     chosenCats.push(cat);
     state.merchantMemory[merchant] = cat;
     state.transactions = state.transactions.map((tx) => {
-      if (tx.merchant === merchant) {
-        return { ...tx, category: cat, confidence: 1 };
-      }
+      if (tx.merchant === merchant) return { ...tx, category: cat, confidence: 1 };
       return tx;
     });
   });
   saveState(state);
   maybeShowAtmCashAlert(chosenCats);
+  merchantReviewDoneCount += rows.length;
+  return rows.length;
+}
+
+document.getElementById("btn-merchants-more")?.addEventListener("click", () => {
+  saveCurrentMerchantBatch();
+  const review = merchantsNeedingReview(state.transactions);
+  renderMerchantReview(review, 0);
+  window.scrollTo(0, 0);
+});
+
+document.getElementById("btn-merchants-done").addEventListener("click", () => {
+  saveCurrentMerchantBatch();
+  merchantReviewDoneCount = 0;
   if (merchantReviewReturnsToDashboard) {
     merchantReviewReturnsToDashboard = false;
     renderDashboard();
@@ -1369,6 +1392,7 @@ let merchantReviewReturnsToDashboard = false;
 
 document.getElementById("btn-categorize-now")?.addEventListener("click", () => {
   merchantReviewReturnsToDashboard = true;
+  merchantReviewDoneCount = 0;
   const review = merchantsNeedingReview(state.transactions);
   renderMerchantReview(review, 0);
   show("merchants");
