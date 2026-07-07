@@ -139,6 +139,38 @@ export function averageTotalSpending(transactions, days = 45) {
   return months > 0 ? total / months : 0;
 }
 
+/**
+ * Summarizes how much of a person's spending is still sitting in "Unknown."
+ * Counts distinct MERCHANTS, not raw transactions — one categorization
+ * decision resolves every duplicate of that merchant at once, so merchant
+ * count is what actually reflects "how many decisions are left," not
+ * transaction count (which can look huge with many months of history even
+ * though most of it collapses into a handful of repeat merchants).
+ * "Miscellaneous" doesn't count here — that's a deliberate catch-all choice,
+ * not an unresolved one.
+ */
+export function uncategorizedSummary(transactions, options = {}) {
+  const pctThreshold = options.pctThreshold ?? 3;
+  const merchantCountThreshold = options.merchantCountThreshold ?? 5;
+
+  const spendTx = transactions.filter((tx) => tx.amount < 0);
+  const totalSpend = spendTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const unknownTx = spendTx.filter((tx) => tx.category === "Unknown");
+  const unknownSpend = unknownTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const unknownMerchants = new Set(unknownTx.map((tx) => tx.merchant || tx.description));
+
+  const pctOfSpend = totalSpend > 0 ? (unknownSpend / totalSpend) * 100 : 0;
+
+  return {
+    unknownTxCount: unknownTx.length,
+    unknownMerchantCount: unknownMerchants.size,
+    unknownSpend: Math.round(unknownSpend),
+    pctOfSpend: Math.round(pctOfSpend * 10) / 10,
+    shouldHighlight: unknownTx.length > 0 && (pctOfSpend >= pctThreshold || unknownMerchants.size >= merchantCountThreshold)
+  };
+}
+
 export function computeMonthsCovered(safetyNetBalance, avgSpendingMonthly) {
   if (!avgSpendingMonthly || avgSpendingMonthly <= 0) return null;
   return safetyNetBalance / avgSpendingMonthly;
