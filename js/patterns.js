@@ -8,7 +8,8 @@ const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frid
 // Categories that represent money moving around rather than being spent.
 const NON_SPEND_CATEGORIES = new Set([
   "Income", "Interest Income", "One-Time Income", "Safety Net Contribution",
-  "Savings", "Transfer", "Transfer from Savings", "Transfer from Checking"
+  "Savings", "Transfer", "Transfer from Savings", "Transfer from Checking",
+  "ATM Withdrawal / Cash"
 ]);
 
 function daysBetween(a, b) {
