@@ -1,9 +1,10 @@
-import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
   merchantsNeedingReview,
   averageNeedsSpending,
+  averageTotalSpending,
   computeMonthsCovered,
   needsVsWants,
   detectRecurring,
@@ -238,6 +239,16 @@ document.getElementById("btn-upload-start-over").addEventListener("click", () =>
   show("home");
 });
 
+const ATM_CASH_ALERT_TEXT =
+  "💵 This money is about to go off the grid.\n\nLog what you buy with it, or it disappears from your picture entirely.";
+
+function maybeShowAtmCashAlert(categoriesInvolved) {
+  const list = Array.isArray(categoriesInvolved) ? categoriesInvolved : [categoriesInvolved];
+  if (list.includes("ATM Withdrawal / Cash")) {
+    alert(ATM_CASH_ALERT_TEXT);
+  }
+}
+
 document.getElementById("btn-add-account").addEventListener("click", () => {
   const nickname = document.getElementById("acct-nickname").value.trim();
   const accountType = document.getElementById("acct-type").value;
@@ -295,6 +306,7 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 
   let categorized = applyCategories(added, state.merchantMemory, state.categoryNeedWant);
   state.transactions = state.transactions.concat(categorized);
+  maybeShowAtmCashAlert(categorized.map((tx) => tx.category));
 
   // Auto-detect recurring transactions before review
   const recurringMap = detectRecurring45(state.transactions);
@@ -357,9 +369,11 @@ function renderMerchantReview(review, unknownPct = 0) {
 }
 
 document.getElementById("btn-merchants-done").addEventListener("click", () => {
+  const chosenCats = [];
   document.querySelectorAll(".merchant-review").forEach((row) => {
     const merchant = row.dataset.merchant;
     const cat = row.querySelector(".merchant-cat").value;
+    chosenCats.push(cat);
     state.merchantMemory[merchant] = cat;
     state.transactions = state.transactions.map((tx) => {
       if (tx.merchant === merchant) {
@@ -369,6 +383,7 @@ document.getElementById("btn-merchants-done").addEventListener("click", () => {
     });
   });
   saveState(state);
+  maybeShowAtmCashAlert(chosenCats);
   startWeeklyReview();
 });
 
@@ -591,7 +606,10 @@ function renderReviewWeek(acct) {
 
   // Wire category change → save immediately
   container.querySelectorAll(".review-cat").forEach((sel) => {
-    sel.addEventListener("change", () => saveReviewTx(sel.dataset.txId, sel.value, null, null, null, null));
+    sel.addEventListener("change", () => {
+      saveReviewTx(sel.dataset.txId, sel.value, null, null, null, null);
+      maybeShowAtmCashAlert(sel.value);
+    });
   });
   container.querySelectorAll(".review-nw").forEach((sel) => {
     sel.addEventListener("change", () => saveReviewTx(sel.dataset.txId, null, sel.value, null, null, null));
@@ -774,8 +792,8 @@ document.getElementById("btn-add-sn").addEventListener("click", () => {
   const total = computeSafetyNetBalance(state.safetyNet);
   state.safetyNet.totalBalance = total;
 
-  const avgNeeds = averageNeedsSpending(state.transactions);
-  const months = computeMonthsCovered(total, avgNeeds);
+  const avgTotalSpend = averageTotalSpending(state.transactions);
+  const months = computeMonthsCovered(total, avgTotalSpend);
   state.safetyNetHistory.push({
     date: new Date().toISOString().slice(0, 10),
     balance: total,
@@ -790,13 +808,15 @@ document.getElementById("btn-add-sn").addEventListener("click", () => {
 function renderSafetySummary() {
   const el = document.getElementById("sn-summary");
   const total = computeSafetyNetBalance(state.safetyNet);
-  const avg = averageNeedsSpending(state.transactions);
-  const months = computeMonthsCovered(total, avg);
+  const avgTotalSpend = averageTotalSpending(state.transactions);
+  const avgNeeds = averageNeedsSpending(state.transactions);
+  const months = computeMonthsCovered(total, avgTotalSpend);
+  const monthsNeedsOnly = computeMonthsCovered(total, avgNeeds);
   el.classList.remove("hidden");
   el.innerHTML = `
     <h3>Current Safety Net</h3>
     <p><strong>${fmtMoney(total)}</strong></p>
-    <p class="small">Months Covered (needs only, 90-day average): <strong>${fmtMonths(months)}</strong></p>
+    <p class="small">Months Covered (needs + wants, 45-day average): <strong>${fmtMonths(months)}</strong>${monthsNeedsOnly != null ? ` <span style="color:var(--muted);">(stretches to ${fmtMonths(monthsNeedsOnly)} on needs alone)</span>` : ""}</p>
   `;
 }
 
@@ -961,6 +981,107 @@ function toggleTagOnTx(txId) {
   renderTags(getFilteredTransactions());
 }
 
+// ── Manual cash-purchase entry ─────────────────────────────────────────────
+// Cash spending can't be pulled from a bank export, so this form lets people
+// log it by hand. Entries are stored under a "Cash Wallet" account like any
+// other transaction — that's what lets a future "cash withdrawn vs. cash
+// logged" comparison work without any special-casing.
+const CASH_ENTRY_EXCLUDED_CATEGORIES = new Set(["Income", "Interest Income", "One-Time Income", "ATM Withdrawal / Cash"]);
+let cashEntryTags = [];
+
+function uid() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return "tx-" + Math.random().toString(36).slice(2, 11);
+}
+
+function populateCashEntryCategoryOptions() {
+  const sel = document.getElementById("cash-entry-category");
+  if (!sel || sel.options.length) return;
+  sel.innerHTML = CATEGORIES
+    .filter((c) => !CASH_ENTRY_EXCLUDED_CATEGORIES.has(c))
+    .map((c) => `<option>${escapeHtml(c)}</option>`)
+    .join("");
+}
+
+function renderCashEntryTagChips() {
+  const wrap = document.getElementById("cash-entry-tag-chips");
+  if (!wrap) return;
+  const allTags = [...DEFAULT_TAGS, ...(state.customTags || [])];
+  wrap.innerHTML = allTags.map((tag) => {
+    const active = cashEntryTags.includes(tag);
+    return `<button type="button" class="tag-chip cash-entry-tag-chip${active ? " active" : ""}" data-tag="${escapeAttr(tag)}">${escapeHtml(tag)}</button>`;
+  }).join("");
+  wrap.querySelectorAll(".cash-entry-tag-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tag = btn.dataset.tag;
+      cashEntryTags = cashEntryTags.includes(tag) ? cashEntryTags.filter((t) => t !== tag) : [...cashEntryTags, tag];
+      renderCashEntryTagChips();
+    });
+  });
+}
+
+function syncCashEntryOwnerVisibility() {
+  const wrap = document.getElementById("cash-entry-owner-wrap");
+  if (wrap) wrap.classList.toggle("hidden", !state.couplesMode);
+}
+
+document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
+  const desc = document.getElementById("cash-entry-desc").value.trim();
+  const amountRaw = document.getElementById("cash-entry-amount").value;
+  const amount = Number(amountRaw);
+  const dateInput = document.getElementById("cash-entry-date").value;
+  const category = document.getElementById("cash-entry-category").value;
+  const needWant = document.getElementById("cash-entry-needwant").value;
+  const owner = state.couplesMode ? document.getElementById("cash-entry-owner").value : "primary";
+
+  if (!desc || !amountRaw || !(amount > 0)) {
+    alert("Add what you bought and an amount greater than $0.");
+    return;
+  }
+
+  const date = dateInput || new Date().toISOString().slice(0, 10);
+  const nickname = "Cash Wallet";
+
+  if (!state.accounts.find((a) => a.nickname === nickname)) {
+    state.accounts.push({ nickname, type: "Cash" });
+  }
+  state.accountOwners[nickname] = owner;
+
+  const tx = {
+    id: uid(),
+    date,
+    description: desc,
+    amount: -Math.abs(amount),
+    account: nickname,
+    accountType: "Cash",
+    type: "debit",
+    merchant: normalizeMerchant(desc),
+    category,
+    confidence: 1,
+    needWant,
+    isReimbursement: false,
+    tags: [...cashEntryTags]
+  };
+
+  state.transactions.push(tx);
+  saveState(state);
+
+  // Reset the form
+  document.getElementById("cash-entry-desc").value = "";
+  document.getElementById("cash-entry-amount").value = "";
+  document.getElementById("cash-entry-date").value = "";
+  cashEntryTags = [];
+  renderCashEntryTagChips();
+
+  const confirmEl = document.getElementById("cash-entry-confirm");
+  if (confirmEl) {
+    confirmEl.classList.remove("hidden");
+    setTimeout(() => confirmEl.classList.add("hidden"), 2500);
+  }
+
+  renderDashboard();
+});
+
 // ── Spending Patterns (client-side only, no AI, no external calls) ────────
 function renderPatternInsights(txs) {
   const container = document.getElementById("pattern-insights-list");
@@ -1035,8 +1156,10 @@ document.addEventListener("change", (e) => {
 function renderDashboard() {
   const txs = getFilteredTransactions();
   const total = computeSafetyNetBalance(state.safetyNet);
+  const avgTotalSpend = averageTotalSpending(txs);
   const avgNeeds = averageNeedsSpending(txs);
-  const months = computeMonthsCovered(total, avgNeeds);
+  const months = computeMonthsCovered(total, avgTotalSpend);
+  const monthsNeedsOnly = computeMonthsCovered(total, avgNeeds);
   const nw = needsVsWants(txs);
   const bills = detectRecurring(txs);
   const subs = subscriptionSummary(txs);
@@ -1048,6 +1171,12 @@ function renderDashboard() {
 
   document.getElementById("overlap-notice").classList.toggle("hidden", !overlapFlag);
   document.getElementById("months-covered").textContent = fmtMonths(months);
+  const monthsSubEl = document.getElementById("months-covered-needs-sub");
+  if (monthsSubEl) {
+    monthsSubEl.textContent = monthsNeedsOnly != null
+      ? `(stretches to ${fmtMonths(monthsNeedsOnly)} months on needs alone)`
+      : "";
+  }
   document.getElementById("sn-current").textContent = fmtMoney(total);
   document.getElementById("growth-streak").textContent = String(state.streaks?.growthStreak || 0);
   document.getElementById("checkin-streak").textContent = String(state.streaks?.weeklyCheckIn || 0);
@@ -1106,6 +1235,10 @@ function renderDashboard() {
   if (windowSelect) windowSelect.value = String(state.analysisWindowDays || 365);
   renderPatternInsights(txs);
 
+  populateCashEntryCategoryOptions();
+  renderCashEntryTagChips();
+  syncCashEntryOwnerVisibility();
+
   renderCategoryReview(txs);
   renderTags(txs);
 }
@@ -1126,6 +1259,7 @@ document.addEventListener("change", (e) => {
   });
   if (merchant) state.merchantMemory[merchant] = newCat;
   saveState(state);
+  maybeShowAtmCashAlert(newCat);
 });
 
 
