@@ -983,7 +983,9 @@ function summarizeCluster(cluster) {
     endDate: cluster.at(-1).date,
     count: cluster.length,
     total: Math.round(cluster.reduce((s, tx) => s + Math.abs(tx.amount), 0)),
-    merchants: [...new Set(cluster.map((tx) => tx.merchant || tx.description.slice(0, 30)))]
+    merchants: [...new Set(cluster.map((tx) => tx.merchant || tx.description.slice(0, 30)))],
+    txIds: cluster.map((tx) => tx.id).filter(Boolean),
+    anyTagged: cluster.some((tx) => (tx.tags || []).length > 0)
   };
 }
 
