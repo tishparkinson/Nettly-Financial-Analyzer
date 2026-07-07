@@ -16,6 +16,7 @@ import {
   filterByPerson,
   tagSummaries
 } from "./analytics.js";
+import { analyzeSpendingPatterns } from "./patterns.js";
 import {
   loadState,
   saveState,
@@ -380,6 +381,13 @@ let reviewWeekIdx = 0;     // current week index
 let reviewAccountList = []; // accounts to cycle through
 let reviewAcctIdx = 0;     // current account index
 
+// Deep per-transaction review (category/need-want/tags/recurring) is capped to
+// this many recent days regardless of how much total history was imported —
+// older transactions still get categorized via the bulk merchant-review pass
+// and are fully included in the Spending Patterns analysis, they just don't
+// need a one-by-one walkthrough.
+const REVIEW_WINDOW_DAYS = 60;
+
 function startWeeklyReview() {
   showFloatingBtn();
   // Get all accounts that have transactions
@@ -391,8 +399,11 @@ function startWeeklyReview() {
 
 function startReviewForAccount() {
   const acct = reviewAccountList[reviewAcctIdx];
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - REVIEW_WINDOW_DAYS);
+
   const acctTxs = state.transactions
-    .filter((tx) => tx.amount < 0 && tx.account === acct)
+    .filter((tx) => tx.amount < 0 && tx.account === acct && new Date(tx.date) >= cutoff)
     .sort((a, b) => b.date.localeCompare(a.date));
 
   if (!acctTxs.length) {
@@ -950,6 +961,77 @@ function toggleTagOnTx(txId) {
   renderTags(getFilteredTransactions());
 }
 
+// ── Spending Patterns (client-side only, no AI, no external calls) ────────
+function renderPatternInsights(txs) {
+  const container = document.getElementById("pattern-insights-list");
+  if (!container) return;
+
+  const windowDays = state.analysisWindowDays || 365;
+  const result = analyzeSpendingPatterns(txs, windowDays);
+
+  const sections = [];
+
+  if (result.summaries.length) {
+    sections.push(`<ul style="margin:0 0 0.75rem;padding-left:1.2rem;">${result.summaries.map((s) => `<li style="margin-bottom:0.35rem;">${escapeHtml(s)}</li>`).join("")}</ul>`);
+  } else {
+    sections.push(`<p class="small">Not enough history yet in this window to surface patterns — add more transactions or widen the window above.</p>`);
+  }
+
+  if (result.dayOfWeek.available) {
+    const maxVal = Math.max(...result.dayOfWeek.days.map((d) => d.avgPerWeek), 1);
+    sections.push(`
+      <h4 style="margin:0.75rem 0 0.4rem;font-size:0.85rem;color:var(--navy);">Average spend by day of week</h4>
+      <div style="display:flex;gap:0.35rem;align-items:flex-end;height:70px;">
+        ${result.dayOfWeek.days.map((d) => `
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:0.2rem;">
+            <div style="width:100%;background:var(--teal);border-radius:4px 4px 0 0;height:${Math.max(4, Math.round((d.avgPerWeek / maxVal) * 55))}px;"></div>
+            <span style="font-size:0.65rem;color:var(--muted);">${d.day.slice(0,3)}</span>
+          </div>`).join("")}
+      </div>`);
+  }
+
+  if (result.trends.available && result.trends.trends.length) {
+    sections.push(`
+      <h4 style="margin:0.75rem 0 0.4rem;font-size:0.85rem;color:var(--navy);">This month vs. recent average</h4>
+      ${result.trends.trends.slice(0, 6).map((t) => `
+        <div style="display:flex;justify-content:space-between;font-size:0.82rem;margin:0.2rem 0;">
+          <span>${escapeHtml(t.category)}</span>
+          <span style="color:${t.pctChange > 0 ? '#c0392b' : t.pctChange < 0 ? 'var(--teal)' : 'var(--muted)'};">
+            ${t.pctChange == null ? '—' : (t.pctChange > 0 ? '+' : '') + t.pctChange + '%'}
+          </span>
+        </div>`).join("")}`);
+  }
+
+  if (result.anomalies.available) {
+    sections.push(`
+      <h4 style="margin:0.75rem 0 0.4rem;font-size:0.85rem;color:var(--navy);">Unusual charges</h4>
+      ${result.anomalies.anomalies.slice(0, 5).map((a) => `
+        <div style="font-size:0.82rem;margin:0.25rem 0;">
+          ${escapeHtml(a.date)} · ${escapeHtml(a.merchant)} — ${fmtMoney(a.amount)}
+          <span class="small">(usually ~${fmtMoney(a.usualAvg)}, +${a.pctAboveUsual}%)</span>
+        </div>`).join("")}`);
+  }
+
+  if (result.sprees.available) {
+    sections.push(`
+      <h4 style="margin:0.75rem 0 0.4rem;font-size:0.85rem;color:var(--navy);">Spending clusters</h4>
+      ${result.sprees.sprees.slice(0, 5).map((s) => `
+        <div style="font-size:0.82rem;margin:0.25rem 0;">
+          ${escapeHtml(s.startDate)}${s.startDate !== s.endDate ? ' – ' + escapeHtml(s.endDate) : ''} ·
+          ${s.count} purchases · ${fmtMoney(s.total)} total
+        </div>`).join("")}`);
+  }
+
+  container.innerHTML = sections.join("");
+}
+
+document.addEventListener("change", (e) => {
+  if (e.target.id !== "analysis-window-select") return;
+  state.analysisWindowDays = Number(e.target.value);
+  saveState(state);
+  renderPatternInsights(getFilteredTransactions());
+});
+
 function renderDashboard() {
   const txs = getFilteredTransactions();
   const total = computeSafetyNetBalance(state.safetyNet);
@@ -1019,6 +1101,10 @@ function renderDashboard() {
 
   document.getElementById("insights-list").innerHTML = insights.map((i) => `<li>${escapeHtml(i)}</li>`).join("") ||
     "<li>Upload more history to surface patterns.</li>";
+
+  const windowSelect = document.getElementById("analysis-window-select");
+  if (windowSelect) windowSelect.value = String(state.analysisWindowDays || 365);
+  renderPatternInsights(txs);
 
   renderCategoryReview(txs);
   renderTags(txs);
