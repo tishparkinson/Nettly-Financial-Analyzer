@@ -321,6 +321,287 @@ export function overallWantsTier(transactions, windowDays = 30) {
   return { available: true, monthlyWants: Math.round(monthlyWants), pctOfIncome: Math.round(pctOfIncome), ...tier };
 }
 
+/**
+ * Top want-category per calendar month, for the last N months — feeds the
+ * "View history" toggle under the worst-offender alert. Collapsed/opt-in by
+ * design: the headline stays focused on right now, history is a click away
+ * for anyone who wants it, not competing for attention by default.
+ */
+export function topWantCategoryByMonth(transactions, monthsBack = 6) {
+  const now = new Date();
+  const results = [];
+
+  for (let i = 0; i < monthsBack; i++) {
+    const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const label = monthStart.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+    const monthTx = transactions.filter((tx) => {
+      const d = new Date(tx.date);
+      return d >= monthStart && d < monthEnd;
+    });
+
+    const income = monthTx
+      .filter((tx) => tx.amount > 0 && tx.category === "Income")
+      .reduce((s, tx) => s + tx.amount, 0);
+
+    const wants = monthTx.filter((tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category));
+    const byCat = new Map();
+    for (const tx of wants) byCat.set(tx.category, (byCat.get(tx.category) || 0) + Math.abs(tx.amount));
+    const sorted = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
+
+    if (!sorted.length) {
+      results.push({ label, available: false });
+      continue;
+    }
+    const [topCategory, amount] = sorted[0];
+    const pctOfIncome = income > 0 ? Math.round((amount / income) * 100) : null;
+    results.push({ label, available: true, topCategory, amount: Math.round(amount), pctOfIncome });
+  }
+
+  return results;
+}
+
+/**
+ * Overall Wants tier per calendar month, for the last N months — feeds the
+ * "View history" toggle under the Wants tier badge.
+ */
+export function overallWantsTierByMonth(transactions, monthsBack = 6) {
+  const now = new Date();
+  const results = [];
+
+  for (let i = 0; i < monthsBack; i++) {
+    const monthStart = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const monthEnd = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+    const label = monthStart.toLocaleDateString("en-US", { month: "short", year: "numeric" });
+
+    const monthTx = transactions.filter((tx) => {
+      const d = new Date(tx.date);
+      return d >= monthStart && d < monthEnd;
+    });
+
+    const income = monthTx
+      .filter((tx) => tx.amount > 0 && tx.category === "Income")
+      .reduce((s, tx) => s + tx.amount, 0);
+
+    const wants = monthTx
+      .filter((tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category))
+      .reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+    if (income <= 0) {
+      results.push({ label, available: false });
+      continue;
+    }
+
+    const pctOfIncome = (wants / income) * 100;
+    const tier = getSpendingTier(pctOfIncome, BUDGET_GUIDELINES["Overall Wants"]);
+    results.push({ label, available: true, amount: Math.round(wants), pctOfIncome: Math.round(pctOfIncome), ...tier });
+  }
+
+  return results;
+}
+
+// Categories that make up "the tax you pay for convenience" — dining out,
+// fast food, coffee/convenience stops, and ATM/bank fees. Delivery services
+// (DoorDash, Uber Eats, etc.) already fall under Dining Out via the merchant
+// rules, so they're included here without any extra handling.
+const CONVENIENCE_TAX_CATEGORIES = new Set(["Coffee & Convenience", "Fast Food", "Dining Out", "ATM & Bank Fees"]);
+
+export function convenienceTax(transactions, windowDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+  const spend = transactions.filter((tx) => tx.amount < 0 && CONVENIENCE_TAX_CATEGORIES.has(tx.category) && inWindow(tx, cutoff));
+  const total = spend.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  if (total <= 0) return { available: false, reason: "No convenience-category spending in this window." };
+
+  const monthlyIncome = estimateMonthlyIncome(transactions, windowDays);
+  const spanMonths = Math.max(Math.min(windowDays, daysBetween(new Date(), cutoff)) / 30, 0.1);
+  const monthlyAmt = total / spanMonths;
+  const pctOfIncome = monthlyIncome ? Math.round((monthlyAmt / monthlyIncome) * 100) : null;
+
+  const breakdown = [...CONVENIENCE_TAX_CATEGORIES]
+    .map((cat) => ({ category: cat, monthlyAmt: Math.round((spend.filter((tx) => tx.category === cat).reduce((s, tx) => s + Math.abs(tx.amount), 0)) / spanMonths) }))
+    .filter((b) => b.monthlyAmt > 0)
+    .sort((a, b) => b.monthlyAmt - a.monthlyAmt);
+
+  return { available: true, monthlyAmt: Math.round(monthlyAmt), pctOfIncome, breakdown };
+}
+
+const SAFETY_NET_STARTER_GOAL = 1000; // a common "starter emergency fund" benchmark
+const SUGGESTION_CUT_PCT = 0.20;
+const MIN_MONTHLY_FREED = 10;
+const MAX_MONTHS_TO_GOAL = 36;
+
+/**
+ * Generates concrete "cut category X by 20% → frees $Y/mo → reaches a $1,000
+ * starter emergency fund in Z months" suggestions, one per top want-category
+ * from last month's spending. Doesn't ask the person to pick one — shows
+ * whichever ones are still realistic THIS month and lets them choose (or
+ * not). A suggestion is dropped (not just flagged) if this month's spending
+ * in that category has already exceeded what a 20%-lower month would allow —
+ * no point suggesting a cut that's already off the table for this cycle.
+ */
+export function safetyNetBuilderSuggestions(transactions) {
+  const now = new Date();
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const thisMonthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+
+  const lastMonthTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= lastMonthStart && d < thisMonthStart; });
+  if (!lastMonthTx.some((tx) => tx.amount < 0)) {
+    return { available: false, reason: "Need at least one full month of history to generate suggestions." };
+  }
+
+  const monthToDateTx = transactions.filter((tx) => { const d = new Date(tx.date); return d >= thisMonthStart && d < thisMonthEnd; });
+
+  const isWantSpend = (tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category);
+
+  const wantsByCat = new Map();
+  for (const tx of lastMonthTx) if (isWantSpend(tx)) wantsByCat.set(tx.category, (wantsByCat.get(tx.category) || 0) + Math.abs(tx.amount));
+
+  const mtdByCat = new Map();
+  for (const tx of monthToDateTx) if (isWantSpend(tx)) mtdByCat.set(tx.category, (mtdByCat.get(tx.category) || 0) + Math.abs(tx.amount));
+
+  const monthlyIncome = estimateMonthlyIncome(transactions, 60);
+  const candidates = [];
+
+  for (const [category, baselineAmt] of wantsByCat) {
+    const freedAmt = baselineAmt * SUGGESTION_CUT_PCT;
+    if (freedAmt < MIN_MONTHLY_FREED) continue;
+
+    const reducedTarget = baselineAmt * (1 - SUGGESTION_CUT_PCT);
+    const mtdAmt = mtdByCat.get(category) || 0;
+    if (mtdAmt > reducedTarget) continue; // already spent past the reduced target — not reachable this month
+
+    const monthsToGoal = Math.ceil(SAFETY_NET_STARTER_GOAL / freedAmt);
+    if (monthsToGoal > MAX_MONTHS_TO_GOAL) continue;
+
+    const guideline = BUDGET_GUIDELINES[category];
+    let tier = null, overGuideline = false;
+    if (guideline && monthlyIncome) {
+      const pctOfIncome = (baselineAmt / monthlyIncome) * 100;
+      const t = getSpendingTier(pctOfIncome, guideline);
+      tier = t.tier; overGuideline = t.overGuideline;
+    }
+
+    const cutPctLabel = Math.round(SUGGESTION_CUT_PCT * 100);
+    candidates.push({
+      category,
+      baselineAmt: Math.round(baselineAmt),
+      mtdAmt: Math.round(mtdAmt),
+      cutPct: cutPctLabel,
+      freedAmt: Math.round(freedAmt),
+      monthsToGoal,
+      tier,
+      overGuideline,
+      summary: `Cutting ${category} by ${cutPctLabel}% would free about ${fmtMoney(freedAmt)}/mo — enough to build a $${SAFETY_NET_STARTER_GOAL} starter emergency fund in about ${monthsToGoal} month${monthsToGoal !== 1 ? "s" : ""}.`
+    });
+  }
+
+  candidates.sort((a, b) => b.baselineAmt - a.baselineAmt);
+  const top = candidates.slice(0, 3);
+
+  return {
+    available: top.length > 0,
+    suggestions: top,
+    goal: SAFETY_NET_STARTER_GOAL,
+    reason: top.length ? null : "No want-category has meaningful room to cut this month, or the realistic cuts are already used up for this cycle."
+  };
+}
+
+/**
+ * "Where did the raise go?" — when income has risen vs. the recent baseline,
+ * breaks down whether the increase went to needs/bills, convenience
+ * spending, other wants, or savings/unspent. Needs a meaningful income
+ * increase to report anything at all.
+ */
+export function incomeAllocationTrend(transactions) {
+  const now = new Date();
+  const todayOfMonth = now.getDate();
+  const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  // Compare only through today's day-of-month in every month, so a partial
+  // current month is never compared against full baseline months — that
+  // would make spending look artificially low just because the month isn't
+  // over yet.
+  const thisMonthPartialEnd = new Date(now.getFullYear(), now.getMonth(), todayOfMonth + 1);
+  const baselineMonths = [1, 2, 3].map((i) => {
+    const start = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const partialEnd = new Date(now.getFullYear(), now.getMonth() - i, todayOfMonth + 1);
+    return { start, end: partialEnd };
+  });
+
+  const sumIn = (start, end, filterFn) =>
+    transactions.filter((tx) => { const d = new Date(tx.date); return d >= start && d < end && filterFn(tx); })
+      .reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const isIncome = (tx) => tx.amount > 0 && tx.category === "Income";
+  const isNeedSpend = (tx) => tx.amount < 0 && tx.needWant === "need" && !NON_SPEND_CATEGORIES.has(tx.category);
+  const isConvenience = (tx) => tx.amount < 0 && CONVENIENCE_TAX_CATEGORIES.has(tx.category);
+  const isOtherWant = (tx) => tx.amount < 0 && tx.needWant === "want" && !CONVENIENCE_TAX_CATEGORIES.has(tx.category) && !NON_SPEND_CATEGORIES.has(tx.category);
+
+  const currentIncome = sumIn(thisMonthStart, thisMonthPartialEnd, isIncome);
+  const baselineIncomes = baselineMonths.map((m) => sumIn(m.start, m.end, isIncome));
+  const validBaselineIncomes = baselineIncomes.filter((v) => v > 0);
+  const baselineIncome = validBaselineIncomes.length ? validBaselineIncomes.reduce((a, b) => a + b, 0) / validBaselineIncomes.length : 0;
+
+  const deltaIncome = currentIncome - baselineIncome;
+  if (!baselineIncome || deltaIncome < 50) {
+    return { available: false, reason: "No significant income increase detected to trace." };
+  }
+
+  const monthsWithData = baselineMonths.filter((m) =>
+    transactions.some((tx) => { const d = new Date(tx.date); return d >= m.start && d < m.end; })
+  );
+  const avgOver = (filterFn) =>
+    monthsWithData.length ? monthsWithData.reduce((s, m) => s + sumIn(m.start, m.end, filterFn), 0) / monthsWithData.length : 0;
+
+  const deltaNeeds = sumIn(thisMonthStart, thisMonthPartialEnd, isNeedSpend) - avgOver(isNeedSpend);
+  const deltaConvenience = sumIn(thisMonthStart, thisMonthPartialEnd, isConvenience) - avgOver(isConvenience);
+  const deltaOtherWants = sumIn(thisMonthStart, thisMonthPartialEnd, isOtherWant) - avgOver(isOtherWant);
+  const deltaSavingsOrUnspent = deltaIncome - deltaNeeds - deltaConvenience - deltaOtherWants;
+
+  const parts = [];
+  if (Math.abs(deltaConvenience) >= 10) parts.push(`${fmtMoney(deltaConvenience)} to convenience spending`);
+  if (Math.abs(deltaOtherWants) >= 10) parts.push(`${fmtMoney(deltaOtherWants)} to other wants`);
+  if (Math.abs(deltaNeeds) >= 10) parts.push(`${fmtMoney(deltaNeeds)} to needs/bills`);
+  if (Math.abs(deltaSavingsOrUnspent) >= 10) parts.push(`${fmtMoney(deltaSavingsOrUnspent)} to savings or left unspent`);
+
+  return {
+    available: true,
+    deltaIncome: Math.round(deltaIncome),
+    deltaNeeds: Math.round(deltaNeeds),
+    deltaConvenience: Math.round(deltaConvenience),
+    deltaOtherWants: Math.round(deltaOtherWants),
+    deltaSavingsOrUnspent: Math.round(deltaSavingsOrUnspent),
+    summary: `Income is up ${fmtMoney(deltaIncome)}/mo vs. your recent average${parts.length ? ` — ${parts.join(", ")}.` : "."}`
+  };
+}
+
+/**
+ * Small-purchase blindness — totals of everything at or under the threshold,
+ * this week and this month. Purely informational: these add up fast and are
+ * easy to lose track of individually.
+ */
+export function smallPurchaseBlindness(transactions, threshold = 15) {
+  const now = new Date();
+  const weekCutoff = new Date(now); weekCutoff.setDate(weekCutoff.getDate() - 7);
+  const monthCutoff = new Date(now); monthCutoff.setDate(monthCutoff.getDate() - 30);
+
+  const small = transactions.filter((tx) => tx.amount < 0 && Math.abs(tx.amount) <= threshold && !NON_SPEND_CATEGORIES.has(tx.category));
+  const weekTx = small.filter((tx) => new Date(tx.date) >= weekCutoff);
+  const monthTx = small.filter((tx) => new Date(tx.date) >= monthCutoff);
+
+  return {
+    available: monthTx.length > 0,
+    threshold,
+    weekCount: weekTx.length,
+    weekTotal: Math.round(weekTx.reduce((s, tx) => s + Math.abs(tx.amount), 0)),
+    monthCount: monthTx.length,
+    monthTotal: Math.round(monthTx.reduce((s, tx) => s + Math.abs(tx.amount), 0))
+  };
+}
+
 function fmtMoney(n) {
   return `$${Math.round(Math.abs(n)).toLocaleString()}`;
 }
@@ -625,3 +906,4 @@ export function analyzeSpendingPatterns(transactions, windowDays = 365) {
   }
 
   return { dayOfWeek, payday, trends, drift, volatility, anomalies, sprees, pace, worstOffender, summaries, windowDays };
+}
