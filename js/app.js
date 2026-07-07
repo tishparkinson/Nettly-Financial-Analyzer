@@ -894,6 +894,15 @@ document.getElementById("btn-to-dashboard").addEventListener("click", () => {
 
 // --- Dashboard ---
 
+// Tags that typically represent a one-off event rather than regular,
+// recurring spending — applying one of these defaults the "exclude from
+// monthly averages" checkbox to checked, since these are exactly the kind
+// of outlier that would otherwise skew a normal month's numbers.
+const OUTLIER_EVENT_TAGS = new Set([
+  "Travel", "Vacation", "Business Trip", "Home Repair", "Moving",
+  "Wedding", "New Baby", "Medical Event", "Vehicle Purchase", "Emergency"
+]);
+
 function renderTags(txs) {
   const allTags = [...DEFAULT_TAGS, ...(state.customTags || [])];
   const chipsEl = document.getElementById("default-tag-chips");
@@ -906,6 +915,23 @@ function renderTags(txs) {
 
   document.getElementById("active-tag-label").textContent = activeTag || "None";
 
+  // Proactive nudge: surface the most recent untagged burst of discretionary
+  // spending (from the existing spending-spree detector) as a candidate for
+  // "was this a trip or one-time event? tag it so it doesn't skew your
+  // normal month."
+  const nudgeEl = document.getElementById("trip-tag-nudge");
+  if (nudgeEl) {
+    const sprees = detectSpendingSprees(state.transactions, 60);
+    const untagged = sprees.available ? sprees.sprees.find((s) => !s.anyTagged) : null;
+    if (untagged) {
+      nudgeEl.classList.remove("hidden");
+      nudgeEl.innerHTML = `Noticed a burst of spending ${escapeHtml(untagged.startDate)}${untagged.startDate !== untagged.endDate ? "–" + escapeHtml(untagged.endDate) : ""}
+        (${untagged.count} purchases, ${fmtMoney(untagged.total)}) — trip, event, or something one-off? Pick a tag above, check those transactions below, and mark them as one-time so they don't skew your normal month.`;
+    } else {
+      nudgeEl.classList.add("hidden");
+    }
+  }
+
   const totals = tagSummaries(txs);
   const totalsEl = document.getElementById("tag-totals");
   totalsEl.innerHTML = totals.length
@@ -917,21 +943,29 @@ function renderTags(txs) {
     .sort((a, b) => b.date.localeCompare(a.date))
     .slice(0, 50);
 
-  const applyBtnHtml = `<div style="margin:0.5rem 0;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
-    <button type="button" class="btn btn-secondary" id="btn-apply-tag-checked" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;"
-      ${activeTag ? "" : "disabled"}>Apply "${escapeHtml(activeTag || "")}" to checked</button>
-    <button type="button" class="btn btn-ghost" id="btn-check-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Check all</button>
-    <button type="button" class="btn btn-ghost" id="btn-uncheck-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Uncheck all</button>
+  const suggestOneTime = OUTLIER_EVENT_TAGS.has(activeTag);
+  const applyBtnHtml = `<div style="margin:0.5rem 0;">
+    <label class="small" style="display:flex;align-items:center;gap:0.4rem;margin:0 0 0.5rem;cursor:pointer;">
+      <input type="checkbox" id="tag-mark-onetime" ${suggestOneTime ? "checked" : ""} style="width:auto;margin:0;">
+      Also exclude these from monthly averages (one-time expense)
+    </label>
+    <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+      <button type="button" class="btn btn-secondary" id="btn-apply-tag-checked" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;"
+        ${activeTag ? "" : "disabled"}>Apply "${escapeHtml(activeTag || "")}" to checked</button>
+      <button type="button" class="btn btn-ghost" id="btn-check-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Check all</button>
+      <button type="button" class="btn btn-ghost" id="btn-uncheck-all-tags" style="width:auto;margin:0;padding:0.4rem 0.85rem;font-size:0.88rem;">Uncheck all</button>
+    </div>
   </div>`;
 
   document.getElementById("tx-tag-list").innerHTML = recent.length
     ? applyBtnHtml + recent.map((tx) => {
       const tagStr = (tx.tags || []).length ? (tx.tags || []).map((t) => `#${escapeHtml(t)}`).join(" ") : "";
+      const oneTimeStr = tx.isOneTime ? " · one-time" : "";
       return `<div class="tx-tag-row" style="display:grid;grid-template-columns:1.25rem 1fr;gap:0.5rem;align-items:start;">
         <input type="checkbox" class="tx-tag-check" data-tx-id="${escapeAttr(tx.id)}" style="margin-top:0.25rem;flex-shrink:0;">
         <div style="min-width:0;cursor:pointer;overflow:hidden;" data-tx-id="${escapeAttr(tx.id)}">
           <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0, 50))}</div>
-          <div class="small">${fmtMoney(Math.abs(tx.amount))} ${tagStr ? `· ${tagStr}` : ""}</div>
+          <div class="small">${fmtMoney(Math.abs(tx.amount))} ${tagStr ? `· ${tagStr}` : ""}${oneTimeStr}</div>
         </div>
       </div>`;
     }).join("")
@@ -971,17 +1005,24 @@ document.getElementById("tx-tag-list").addEventListener("click", (e) => {
   // Apply button
   if (e.target.id === "btn-apply-tag-checked") {
     if (!activeTag) return;
+    const markOneTime = document.getElementById("tag-mark-onetime")?.checked;
     document.querySelectorAll(".tx-tag-check:checked").forEach((cb) => {
       const txId = cb.dataset.txId;
       const tx = state.transactions.find((t) => t.id === txId);
-      if (tx && !(tx.tags || []).includes(activeTag)) {
-        state.transactions = state.transactions.map((t) =>
-          t.id === txId ? { ...t, tags: [...(t.tags || []), activeTag] } : t
-        );
+      if (!tx) return;
+      const needsTag = !(tx.tags || []).includes(activeTag);
+      if (needsTag || markOneTime) {
+        state.transactions = state.transactions.map((t) => {
+          if (t.id !== txId) return t;
+          const updated = { ...t };
+          if (needsTag) updated.tags = [...(t.tags || []), activeTag];
+          if (markOneTime) updated.isOneTime = true;
+          return updated;
+        });
       }
     });
     saveState(state);
-    renderTags(getFilteredTransactions());
+    renderDashboard();
     return;
   }
   // Check all / uncheck all
