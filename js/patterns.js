@@ -233,12 +233,12 @@ export function paceComparison(transactions, windowDays) {
 }
 
 /**
- * Finds the one want-category that's both (a) beyond its "Generous"
- * guideline ceiling as a % of income, AND (b) trending worse vs. the
- * previous pay cycle. Only flags something when both are true — over-
- * guideline alone might just be a person's steady, chosen normal; trending
- * worse alone might just be normal week-to-week noise. Together, they're
- * worth surfacing.
+ * Finds the want-category furthest beyond its "Generous" guideline ceiling
+ * as a % of income. Flags it purely on being over guideline — a steady,
+ * unchanging habit still counts, since the point is surfacing overspending
+ * itself, not just changes in it. The trend vs. the previous pay cycle is
+ * still included in the message for context (worsening / holding steady /
+ * improving-but-still-high), it just doesn't gate whether this appears.
  */
 export function worstOffendingWantCategory(transactions, windowDays) {
   const pace = paceComparison(transactions, windowDays);
@@ -260,8 +260,7 @@ export function worstOffendingWantCategory(transactions, windowDays) {
     const pctOfIncome = cycleIncome > 0 ? (c.currentAmt / cycleIncome) * 100 : (monthlyIncome > 0 ? (monthlyEquivalentAmt / monthlyIncome) * 100 : null);
     if (pctOfIncome == null) continue;
     const tier = getSpendingTier(pctOfIncome, guideline);
-    const trendingWorse = c.deltaAmt > 0;
-    if (tier.overGuideline && trendingWorse) {
+    if (tier.overGuideline) {
       candidates.push({
         category: c.category,
         currentAmt: c.currentAmt,
@@ -275,15 +274,23 @@ export function worstOffendingWantCategory(transactions, windowDays) {
   }
 
   if (!candidates.length) {
-    return { available: false, reason: "No want-category is both over its usual guideline and trending worse right now." };
+    return { available: false, reason: "No want-category is currently over its usual guideline." };
   }
 
   candidates.sort((a, b) => b.pctOfIncome - a.pctOfIncome);
   const worst = candidates[0];
+
+  const cyclePeriod = worst.cycleDays >= 25 ? "month" : worst.cycleDays >= 12 ? "two weeks" : "week";
+  const trendPhrase = worst.deltaAmt > 5
+    ? `and trending higher (up ${fmtPct(worst.deltaPct)} from your last cycle)`
+    : worst.deltaAmt < -5
+      ? `though trending lower (down ${fmtPct(worst.deltaPct)} from your last cycle) — still worth a look`
+      : "holding fairly steady vs. your last cycle";
+
   return {
     available: true,
     ...worst,
-    summary: `${worst.category}: ${fmtMoney(worst.currentAmt)} this ${worst.cycleDays >= 25 ? "month" : worst.cycleDays >= 12 ? "two weeks" : "week"} (${worst.pctOfIncome}% of income, above the usual ${worst.guidelineAim}% guideline) — and up ${fmtPct(worst.deltaPct)} from your last cycle.`
+    summary: `${worst.category}: ${fmtMoney(worst.currentAmt)} this ${cyclePeriod} (${worst.pctOfIncome}% of income, above the usual ${worst.guidelineAim}% guideline) — ${trendPhrase}.`
   };
 }
 
@@ -618,4 +625,3 @@ export function analyzeSpendingPatterns(transactions, windowDays = 365) {
   }
 
   return { dayOfWeek, payday, trends, drift, volatility, anomalies, sprees, pace, worstOffender, summaries, windowDays };
-}
