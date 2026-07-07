@@ -67,6 +67,7 @@ function show(name) {
   if (name === "upload") {
     syncUploadCouples();
     syncUploadCouplesCheckbox();
+    updateLastImportedHint();
     const hint = document.getElementById("cutoff-date-hint");
     if (hint) {
       const d = new Date();
@@ -265,16 +266,51 @@ function maybeShowAtmCashAlert(categoriesInvolved) {
   }
 }
 
+// Keep the nickname field pre-filled with a sensible default (matching the
+// selected account type) unless the person has typed their own name — a
+// real default beats an empty field with a placeholder that vanishes.
+let nicknameWasAutoFilled = true;
+document.getElementById("acct-type")?.addEventListener("change", (e) => {
+  const nicknameInput = document.getElementById("acct-nickname");
+  if (nicknameInput && nicknameWasAutoFilled) {
+    nicknameInput.value = e.target.value;
+  }
+  updateLastImportedHint();
+});
+document.getElementById("acct-nickname")?.addEventListener("input", (e) => {
+  nicknameWasAutoFilled = false;
+  updateLastImportedHint();
+});
+
+function updateLastImportedHint() {
+  const nickname = document.getElementById("acct-nickname")?.value.trim();
+  const hintEl = document.getElementById("acct-last-imported-hint");
+  if (!hintEl) return;
+  if (!nickname) { hintEl.textContent = ""; return; }
+  const existingTx = state.transactions.filter((tx) => tx.account === nickname);
+  if (!existingTx.length) {
+    hintEl.textContent = "";
+    return;
+  }
+  const lastDate = existingTx.map((tx) => tx.date).sort().at(-1);
+  hintEl.textContent = `You've already added "${nickname}" through ${lastDate} — paste anything from that date forward to pick up where you left off.`;
+}
+
 document.getElementById("btn-add-account").addEventListener("click", () => {
   const nickname = document.getElementById("acct-nickname").value.trim();
   const accountType = document.getElementById("acct-type").value;
   const text = document.getElementById("paste-tx").value;
+  const last4 = document.getElementById("acct-last4")?.value.trim();
   if (!nickname || !text.trim()) {
     alert("Add an account nickname and paste some transactions.");
     return;
   }
   const owner = state.couplesMode ? document.getElementById("acct-owner").value : "primary";
   state.accountOwners[nickname] = owner;
+  if (last4) {
+    if (!state.accountDigits) state.accountDigits = {};
+    state.accountDigits[last4] = { nickname, type: accountType };
+  }
   const parsed = parseTransactions(text, nickname, accountType);
   if (!parsed.length) {
     alert("We could not find transactions in that paste. Try including dates and amounts on each line.");
@@ -282,9 +318,35 @@ document.getElementById("btn-add-account").addEventListener("click", () => {
   }
   pendingPaste.push({ nickname, accountType, transactions: parsed, owner });
   document.getElementById("paste-tx").value = "";
+  document.getElementById("acct-last4").value = "";
   saveState(state);
   renderPendingAccounts();
 });
+
+/**
+ * If the person told us which digits belong to which of their accounts,
+ * transfer descriptions like "TRANSFER FROM X0174 TO X3159" can be labeled
+ * precisely (Transfer from Savings / Transfer from Checking) instead of
+ * falling back to a generic Transfer. High confidence when it matches,
+ * since the description is explicit about which account the money came
+ * from — untouched (and left to the normal category rules) when it doesn't.
+ */
+function applyTransferDigitMatching(transactions) {
+  const digits = state.accountDigits;
+  if (!digits || !Object.keys(digits).length) return transactions;
+  const re = /TRANSFER FROM X?(\d{3,6})[^A-Z]{0,20}?TO X?(\d{3,6})/i;
+  return transactions.map((tx) => {
+    const m = re.exec(tx.description);
+    if (!m) return tx;
+    const fromAcct = digits[m[1]];
+    if (!fromAcct) return tx;
+    const cat = fromAcct.type === "Savings" ? "Transfer from Savings"
+      : fromAcct.type === "Checking" ? "Transfer from Checking"
+      : null;
+    if (!cat) return tx;
+    return { ...tx, category: cat, confidence: 0.95 };
+  });
+}
 
 function renderPendingAccounts() {
   const wrap = document.getElementById("pending-accounts");
@@ -321,6 +383,7 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   overlapFlag = overlapDetected;
 
   let categorized = applyCategories(added, state.merchantMemory, state.categoryNeedWant);
+  categorized = applyTransferDigitMatching(categorized);
   state.transactions = state.transactions.concat(categorized);
   maybeShowAtmCashAlert(categorized.map((tx) => tx.category));
 
@@ -353,6 +416,8 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 });
 
 // --- Merchants ---
+const MERCHANT_REVIEW_BATCH_SIZE = 8;
+
 function renderMerchantReview(review, unknownPct = 0) {
   const container = document.getElementById("merchant-list");
   // Also include Unknown transactions not in review list
@@ -360,7 +425,7 @@ function renderMerchantReview(review, unknownPct = 0) {
   for (const tx of state.transactions) {
     if (tx.category === "Unknown") {
       const m = tx.merchant || tx.description.slice(0, 40);
-      if (!unknownMerchants.has(m)) unknownMerchants.set(m, { merchant: m, count: 0, sample: tx.description });
+      if (!unknownMerchants.has(m)) unknownMerchants.set(m, { merchant: m, count: 0, sample: tx.description, category: "Unknown" });
       unknownMerchants.get(m).count++;
     }
   }
@@ -368,20 +433,56 @@ function renderMerchantReview(review, unknownPct = 0) {
   for (const [m, g] of unknownMerchants) {
     if (!allReview.find((r) => r.merchant === m)) allReview.push(g);
   }
+  allReview.sort((a, b) => b.count - a.count);
+
+  const batch = allReview.slice(0, MERCHANT_REVIEW_BATCH_SIZE);
+  const deferredCount = allReview.length - batch.length;
+
   const warningHtml = unknownPct > 0.15
     ? `<div style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.75rem 1rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;">
         <strong>${Math.round(unknownPct * 100)}% of your transactions are uncategorized.</strong>
         Categorizing them now makes your dashboard far more useful. Set a category for each merchant below — it applies to all matching transactions.
        </div>`
     : "";
-  container.innerHTML = warningHtml + allReview.slice(0, 30).map((g) => `
+
+  const deferredHtml = deferredCount > 0
+    ? `<p class="small" style="margin-top:0.5rem;">+${deferredCount} more merchant${deferredCount > 1 ? "s" : ""} with fewer transactions — we'll remind you about those from the dashboard once you're set up, so this doesn't turn into a marathon.</p>`
+    : "";
+
+  container.innerHTML = warningHtml +
+    `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
+      <span class="small" id="merchant-review-progress-label">0 of ${batch.length} set</span>
+    </div>
+    <div style="background:var(--border);border-radius:999px;height:6px;margin-bottom:0.75rem;">
+      <div id="merchant-review-progress-bar" style="background:var(--teal);height:6px;border-radius:999px;transition:width 0.3s;width:0%;"></div>
+    </div>` +
+    batch.map((g) => `
     <div class="merchant-review" data-merchant="${escapeAttr(g.merchant)}">
       <strong>${escapeHtml(g.merchant)}</strong>
       <span class="small"> — seen ${g.count} time${g.count > 1 ? "s" : ""}</span>
       <label>Category (applies to all)</label>
-      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === "Unknown" ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}</select>
+      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === (g.category || "Unknown") ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}</select>
     </div>
-  `).join("");
+  `).join("") + deferredHtml;
+
+  updateMerchantReviewProgress();
+  container.querySelectorAll(".merchant-cat").forEach((sel) => {
+    sel.addEventListener("change", updateMerchantReviewProgress);
+  });
+}
+
+function updateMerchantReviewProgress() {
+  const rows = document.querySelectorAll(".merchant-review");
+  const total = rows.length;
+  let done = 0;
+  rows.forEach((row) => {
+    const sel = row.querySelector(".merchant-cat");
+    if (sel && sel.value !== "Unknown") done++;
+  });
+  const label = document.getElementById("merchant-review-progress-label");
+  const bar = document.getElementById("merchant-review-progress-bar");
+  if (label) label.textContent = `${done} of ${total} set`;
+  if (bar) bar.style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : "0%";
 }
 
 document.getElementById("btn-merchants-done").addEventListener("click", () => {
