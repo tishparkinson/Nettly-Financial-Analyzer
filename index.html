@@ -211,6 +211,19 @@
         <div class="small" id="months-covered-needs-sub" style="margin-top:0.35rem;color:var(--muted);"></div>
       </div>
 
+      <div class="card" id="safe-spending-box" style="border:1.5px solid var(--gold);">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
+          <span style="font-size:0.85rem;font-weight:600;color:var(--navy);">Safe Spending Until Payday</span>
+          <span class="small" id="safe-spending-days"></span>
+        </div>
+        <p style="font-size:1.4rem;font-weight:700;color:var(--navy);margin:0.3rem 0 0;" id="safe-spending-range">—</p>
+        <p class="small" id="safe-spending-detail" style="margin-top:0.15rem;"></p>
+        <details style="margin-top:0.4rem;">
+          <summary style="font-size:0.76rem;color:var(--muted);cursor:pointer;list-style:none;">▸ Show what's factored in</summary>
+          <div id="safe-spending-bills" style="margin-top:0.4rem;font-size:0.8rem;"></div>
+        </details>
+      </div>
+
       <div class="card" id="cant-miss-zone" style="border:1.5px solid var(--teal);">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
           <span style="font-size:0.85rem;font-weight:600;color:var(--navy);">Wants spending overall</span>
@@ -399,6 +412,8 @@
       </p>
       <p class="small">© Verdant Web Solutions, LLC · Idaho</p>
       <p class="small"><a href="#" id="link-home-footer">Home</a></p>
+      <!-- TODO: replace href with your real Stripe (or other) tip/donation payment link -->
+      <p class="small"><a href="#" id="tip-jar-link-app">💛 Enjoying Nettly? Tip the builder</a></p>
     </footer>
   </div>
 
