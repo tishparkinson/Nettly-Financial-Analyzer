@@ -21,7 +21,7 @@ export function merchantsNeedingReview(transactions, threshold = 0.8) {
   for (const tx of transactions) {
     if (tx.confidence >= threshold) continue;
     const m = tx.merchant || normalizeMerchant(tx.description);
-    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, sample: tx.description });
+    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, sample: tx.description, category: tx.category || "Unknown" });
     groups.get(m).count++;
   }
   return [...groups.values()].sort((a, b) => b.count - a.count);
