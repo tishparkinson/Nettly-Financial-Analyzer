@@ -94,8 +94,8 @@
 
       <div class="card">
         <label>Account nickname</label>
-        <input id="acct-nickname" placeholder="e.g. Main Checking">
-        <p class="small" style="margin-top:0.35rem;">Examples: Main Checking · Savings · Emergency Fund · Savings 2 · Car Savings · Credit Card · Cash Wallet</p>
+        <input id="acct-nickname" value="Checking">
+        <p class="small" id="acct-last-imported-hint" style="margin-top:0.35rem;"></p>
         <label>Account type</label>
         <select id="acct-type">
           <option value="Checking">Checking</option>
@@ -112,6 +112,9 @@
             <option value="joint">Joint / household</option>
           </select>
         </div>
+        <label>Last 4 digits <span class="small">(optional)</span></label>
+        <input id="acct-last4" placeholder="e.g. 0174" inputmode="numeric" maxlength="4">
+        <p class="small" style="margin-top:0.35rem;">If your bank shows account numbers in transfer descriptions (like "TRANSFER FROM X0174"), entering the last 4 digits lets Nettly automatically label transfers between your own accounts instead of leaving them generic. Stays on this device only, just like everything else — skip if you'd rather not.</p>
         <label>Paste transactions</label>
         <textarea id="paste-tx" placeholder="Paste rows from your bank export or statement copy…"></textarea>
         <button type="button" class="btn btn-secondary" id="btn-add-account">Add this account</button>
