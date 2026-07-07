@@ -14,7 +14,6 @@ import {
   simpleInsights,
   updateStreaks,
   updateRecords,
-  filterByPerson,
   tagSummaries,
   uncategorizedSummary,
   cashGapSummary,
@@ -63,10 +62,7 @@ const screens = {
 function show(name) {
   Object.values(screens).forEach((el) => el && el.classList.remove("active"));
   if (screens[name]) screens[name].classList.add("active");
-  if (name === "home") syncHomeCouples();
   if (name === "upload") {
-    syncUploadCouples();
-    syncUploadCouplesCheckbox();
     updateLastImportedHint();
     const hint = document.getElementById("cutoff-date-hint");
     if (hint) {
@@ -89,39 +85,7 @@ function fmtMonths(n) {
 }
 
 function getFilteredTransactions() {
-  return filterByPerson(
-    state.transactions,
-    state.accountOwners || {},
-    state.dashboardPersonFilter || "combined",
-    state.partners
-  );
-}
-
-function syncHomeCouples() {
-  const cb = document.getElementById("couples-mode-home");
-  const namesWrap = document.getElementById("couples-names-home");
-  cb.checked = Boolean(state.couplesMode);
-  namesWrap.classList.toggle("hidden", !state.couplesMode);
-  document.getElementById("partner-primary-name").value = state.partners?.primary || "You";
-  document.getElementById("partner-secondary-name").value = state.partners?.secondary || "Partner";
-}
-
-function syncUploadCouples() {
-  const wrap = document.getElementById("acct-owner-wrap");
-  wrap.classList.toggle("hidden", !state.couplesMode);
-  if (!state.couplesMode) return;
-  const sel = document.getElementById("acct-owner");
-  sel.options[0].text = state.partners?.primary || "You";
-  sel.options[1].text = state.partners?.secondary || "Partner";
-}
-
-function saveCouplesFromHome() {
-  state.couplesMode = document.getElementById("couples-mode-home").checked;
-  state.partners = {
-    primary: document.getElementById("partner-primary-name").value.trim() || "You",
-    secondary: document.getElementById("partner-secondary-name").value.trim() || "Partner"
-  };
-  saveState(state);
+  return state.transactions;
 }
 
 // --- Gate ---
@@ -154,21 +118,12 @@ document.getElementById("access-key-input").addEventListener("keydown", (e) => {
 });
 
 // --- Home ---
-document.getElementById("couples-mode-home").addEventListener("change", (e) => {
-  document.getElementById("couples-names-home").classList.toggle("hidden", !e.target.checked);
-  saveCouplesFromHome();
-});
-
-document.getElementById("partner-primary-name").addEventListener("input", saveCouplesFromHome);
-document.getElementById("partner-secondary-name").addEventListener("input", saveCouplesFromHome);
-
 document.getElementById("btn-new").addEventListener("click", () => {
   state = defaultState();
   state.startedAt = new Date().toISOString();
   pendingPaste = [];
   saveState(state);
   show("upload");
-  syncUploadCouples();
 });
 
 document.getElementById("btn-continue").addEventListener("click", () => {
@@ -203,49 +158,9 @@ document.getElementById("link-home-footer").addEventListener("click", (e) => {
 // --- Upload ---
 document.getElementById("btn-upload-back").addEventListener("click", () => show("home"));
 
-// Sync upload-screen couples checkbox with state
-function syncUploadCouplesCheckbox() {
-  const cb = document.getElementById("couples-mode-upload");
-  if (!cb) return;
-  cb.checked = Boolean(state.couplesMode);
-  const namesWrap = document.getElementById("couples-names-upload");
-  if (namesWrap) namesWrap.classList.toggle("hidden", !state.couplesMode);
-  const prim = document.getElementById("upload-primary-name");
-  const sec = document.getElementById("upload-secondary-name");
-  if (prim) prim.value = state.partners?.primary || "You";
-  if (sec) sec.value = state.partners?.secondary || "Partner";
-}
-
-(document.getElementById("couples-mode-upload") || document.createElement("input")).addEventListener("change", (e) => {
-  state.couplesMode = e.target.checked;
-  document.getElementById("couples-names-upload").classList.toggle("hidden", !e.target.checked);
-  // sync hidden home inputs too
-  const homeCb = document.getElementById("couples-mode-home");
-  if (homeCb) homeCb.checked = e.target.checked;
-  saveState(state);
-  syncUploadCouples(); // updates account owner dropdown
-});
-
-(document.getElementById("upload-primary-name") || document.createElement("input")).addEventListener("input", (e) => {
-  state.partners = { ...state.partners, primary: e.target.value.trim() || "You" };
-  document.getElementById("partner-primary-name").value = e.target.value;
-  saveState(state);
-});
-
-(document.getElementById("upload-secondary-name") || document.createElement("input")).addEventListener("input", (e) => {
-  state.partners = { ...state.partners, secondary: e.target.value.trim() || "Partner" };
-  document.getElementById("partner-secondary-name").value = e.target.value;
-  saveState(state);
-});
-
-
-
 document.getElementById("btn-upload-start-over").addEventListener("click", () => {
   if (!confirm("Clear everything and start fresh? This removes all accounts and transactions you\'ve added.")) return;
-  const { couplesMode, partners } = state;
   state = defaultState();
-  state.couplesMode = couplesMode;
-  state.partners = { ...partners };
   pendingPaste = [];
   overlapFlag = false;
   saveState(state);
@@ -305,8 +220,6 @@ document.getElementById("btn-add-account").addEventListener("click", () => {
     alert("Add an account nickname and paste some transactions.");
     return;
   }
-  const owner = state.couplesMode ? document.getElementById("acct-owner").value : "primary";
-  state.accountOwners[nickname] = owner;
   if (last4) {
     if (!state.accountDigits) state.accountDigits = {};
     state.accountDigits[last4] = { nickname, type: accountType };
@@ -316,7 +229,7 @@ document.getElementById("btn-add-account").addEventListener("click", () => {
     alert("We could not find transactions in that paste. Try including dates and amounts on each line.");
     return;
   }
-  pendingPaste.push({ nickname, accountType, transactions: parsed, owner });
+  pendingPaste.push({ nickname, accountType, transactions: parsed });
   document.getElementById("paste-tx").value = "";
   document.getElementById("acct-last4").value = "";
   saveState(state);
@@ -356,14 +269,8 @@ function renderPendingAccounts() {
     return;
   }
   wrap.classList.remove("hidden");
-  const ownerLabel = (o) => {
-    if (!state.couplesMode) return "";
-    if (o === "secondary") return ` · ${state.partners?.secondary || "Partner"}`;
-    if (o === "joint") return " · Joint";
-    return ` · ${state.partners?.primary || "You"}`;
-  };
   list.innerHTML = pendingPaste
-    .map((p) => `<li>${p.nickname} (${p.accountType})${ownerLabel(p.owner)} — ${p.transactions.length} rows</li>`)
+    .map((p) => `<li>${p.nickname} (${p.accountType}) — ${p.transactions.length} rows</li>`)
     .join("");
 }
 
@@ -376,7 +283,6 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
     if (!state.accounts.find((a) => a.nickname === batch.nickname)) {
       state.accounts.push({ nickname: batch.nickname, type: batch.accountType });
     }
-    if (batch.owner) state.accountOwners[batch.nickname] = batch.owner;
   }
 
   const { added, overlapDetected } = dedupeTransactions(state.transactions, allNew);
@@ -987,26 +893,6 @@ document.getElementById("btn-to-dashboard").addEventListener("click", () => {
 });
 
 // --- Dashboard ---
-function renderCouplesFilter() {
-  const wrap = document.getElementById("couples-filter-wrap");
-  wrap.classList.toggle("hidden", !state.couplesMode);
-  if (!state.couplesMode) return;
-  const bar = document.getElementById("couples-filter-bar");
-  const filter = state.dashboardPersonFilter || "combined";
-  bar.querySelector('[data-filter="primary"]').textContent = state.partners?.primary || "You";
-  bar.querySelector('[data-filter="secondary"]').textContent = state.partners?.secondary || "Partner";
-  bar.querySelectorAll("button").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.filter === filter);
-  });
-}
-
-document.getElementById("couples-filter-bar").addEventListener("click", (e) => {
-  const btn = e.target.closest("button[data-filter]");
-  if (!btn) return;
-  state.dashboardPersonFilter = btn.dataset.filter;
-  saveState(state);
-  renderDashboard();
-});
 
 function renderTags(txs) {
   const allTags = [...DEFAULT_TAGS, ...(state.customTags || [])];
@@ -1166,11 +1052,6 @@ function renderCashEntryTagChips() {
   });
 }
 
-function syncCashEntryOwnerVisibility() {
-  const wrap = document.getElementById("cash-entry-owner-wrap");
-  if (wrap) wrap.classList.toggle("hidden", !state.couplesMode);
-}
-
 document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   const desc = document.getElementById("cash-entry-desc").value.trim();
   const amountRaw = document.getElementById("cash-entry-amount").value;
@@ -1178,7 +1059,6 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   const dateInput = document.getElementById("cash-entry-date").value;
   const category = document.getElementById("cash-entry-category").value;
   const needWant = document.getElementById("cash-entry-needwant").value;
-  const owner = state.couplesMode ? document.getElementById("cash-entry-owner").value : "primary";
 
   if (!desc || !amountRaw || !(amount > 0)) {
     alert("Add what you bought and an amount greater than $0.");
@@ -1191,7 +1071,6 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   if (!state.accounts.find((a) => a.nickname === nickname)) {
     state.accounts.push({ nickname, type: "Cash" });
   }
-  state.accountOwners[nickname] = owner;
 
   const tx = {
     id: uid(),
@@ -1527,8 +1406,6 @@ function renderDashboard() {
   const insights = simpleInsights(txs);
   const records = state.personalRecords || {};
 
-  renderCouplesFilter();
-
   document.getElementById("overlap-notice").classList.toggle("hidden", !overlapFlag);
   renderSafeSpendingBox();
   renderCantMissZone(txs);
@@ -1599,7 +1476,6 @@ function renderDashboard() {
 
   populateCashEntryCategoryOptions();
   renderCashEntryTagChips();
-  syncCashEntryOwnerVisibility();
   renderWhatToDo(txs);
 
   renderCategoryReview(txs);
