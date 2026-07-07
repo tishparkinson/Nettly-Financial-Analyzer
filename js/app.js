@@ -1,4 +1,4 @@
-import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant, BUDGET_GUIDELINES, getSpendingTier } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
@@ -17,7 +17,7 @@ import {
   filterByPerson,
   tagSummaries
 } from "./analytics.js";
-import { analyzeSpendingPatterns } from "./patterns.js";
+import { analyzeSpendingPatterns, overallWantsTier, worstOffendingWantCategory } from "./patterns.js";
 import {
   loadState,
   saveState,
@@ -1153,6 +1153,37 @@ document.addEventListener("change", (e) => {
   renderPatternInsights(getFilteredTransactions());
 });
 
+function renderCantMissZone(txs) {
+  const badgeEl = document.getElementById("wants-tier-badge");
+  const detailEl = document.getElementById("wants-tier-detail");
+  const alertEl = document.getElementById("worst-offender-alert");
+  if (!badgeEl || !detailEl || !alertEl) return;
+
+  const tierColors = { "Careful": "var(--teal)", "Standard": "#3a6ea5", "Generous": "#c98a1f" };
+  const overall = overallWantsTier(txs, 30);
+
+  if (!overall.available) {
+    badgeEl.innerHTML = "";
+    detailEl.textContent = overall.reason || "";
+  } else {
+    const color = overall.overGuideline ? "#c0392b" : tierColors[overall.tier];
+    badgeEl.innerHTML = `<span style="font-size:0.72rem;font-weight:700;padding:0.15rem 0.55rem;border-radius:999px;color:#fff;background:${color};">${overall.overGuideline ? "Over Guideline" : overall.tier}</span>`;
+    detailEl.textContent = `${fmtMoney(overall.monthlyWants)}/mo on wants (${overall.pctOfIncome}% of income). Careful ≤${Math.round(overall.careful)}% · Standard ≤${Math.round(overall.standard)}% · Generous ≤${Math.round(overall.generous)}%.`;
+  }
+
+  // Only fires when a category is BOTH over its own guideline AND trending
+  // worse vs. the last pay cycle — a steady (even if high) habit doesn't
+  // trigger this, since that's a "your own normal" situation, not a change.
+  const worst = worstOffendingWantCategory(txs, 90);
+  if (worst.available) {
+    alertEl.classList.remove("hidden");
+    alertEl.textContent = worst.summary;
+  } else {
+    alertEl.classList.add("hidden");
+    alertEl.textContent = "";
+  }
+}
+
 function renderDashboard() {
   const txs = getFilteredTransactions();
   const total = computeSafetyNetBalance(state.safetyNet);
@@ -1170,6 +1201,7 @@ function renderDashboard() {
   renderCouplesFilter();
 
   document.getElementById("overlap-notice").classList.toggle("hidden", !overlapFlag);
+  renderCantMissZone(txs);
   document.getElementById("months-covered").textContent = fmtMonths(months);
   const monthsSubEl = document.getElementById("months-covered-needs-sub");
   if (monthsSubEl) {
@@ -1263,24 +1295,7 @@ document.addEventListener("change", (e) => {
 });
 
 
-// Budget guidelines (% of monthly take-home, soft ceiling)
-const BUDGET_GUIDELINES = {
-  "Housing": { aim: 30, note: "Aim to keep housing under 30% of take-home." },
-  "Transportation": { aim: 15, note: "Most budgets target transportation under 15% of take-home." },
-  "Groceries": { aim: 12, note: "A common grocery target is under 12% of take-home." },
-  "Dining Out": { aim: 8, note: "Dining out tends to add up — many households aim for under 8%." },
-  "Fast Food": { aim: 5, note: "Fast food under 5% of take-home keeps it manageable." },
-  "Coffee & Convenience": { aim: 4, note: "Coffee and convenience stops can sneak up — under 4% is a common target." },
-  "Utilities": { aim: 8, note: "Utilities typically run 5–8% of take-home." },
-  "Insurance": { aim: 20, note: "Insurance (all types) often lands between 10–20% of take-home." },
-  "Healthcare": { aim: 8, note: "Healthcare costs vary widely — many budgets target under 8%." },
-  "Subscriptions": { aim: 5, note: "Subscriptions are easy to accumulate — under 5% is a reasonable cap." },
-  "Personal Care": { aim: 5, note: "Personal care typically runs 3–5% of take-home." },
-  "Charity & Donations": { aim: 10, note: "Many aim to give 5–10% — whatever fits your values and situation." },
-  "Religious Contribution": { aim: 10, note: "Tithing and religious giving are deeply personal — this is just for awareness." },
-  "ATM & Bank Fees": { aim: 1, note: "Bank fees ideally stay under 1% of take-home — most can be avoided entirely." },
-  "Gifts": { aim: 5, note: "Gift spending often spikes seasonally — under 5% annually is a common guideline." },
-};
+// Budget guidelines now live in categories.js (BUDGET_GUIDELINES + getSpendingTier), shared with patterns.js
 
 // Needs vs Wants drill-down
 document.addEventListener("click", (e) => {
@@ -1328,28 +1343,33 @@ document.addEventListener("click", (e) => {
     const guideline = BUDGET_GUIDELINES[cat];
     const monthlyAmt = amt / 3;
     const incomePct = monthlyIncome > 0 ? Math.round((monthlyAmt / monthlyIncome) * 100) : null;
-    const overBudget = guideline && incomePct != null && incomePct > guideline.aim;
+    const tierInfo = guideline && incomePct != null ? getSpendingTier(incomePct, guideline) : { tier: null, overGuideline: false };
+
+    const tierColors = { "Careful": "var(--teal)", "Standard": "#3a6ea5", "Generous": "#c98a1f" };
+    const tierBadgeHtml = tierInfo.tier
+      ? `<span style="font-size:0.68rem;font-weight:700;padding:0.1rem 0.45rem;border-radius:999px;margin-left:0.4rem;color:#fff;background:${tierInfo.overGuideline ? '#c0392b' : tierColors[tierInfo.tier]};">${tierInfo.overGuideline ? "Over Guideline" : tierInfo.tier}</span>`
+      : "";
 
     const tooltipText = guideline
       ? (incomePct != null
-          ? `${cat}: you're at ${incomePct}% of monthly income. Guideline: aim for ${guideline.aim}% or less. ${guideline.note}`
+          ? `${cat}: you're at ${incomePct}% of monthly income (${tierInfo.tier}${tierInfo.overGuideline ? ", above the usual Generous ceiling" : ""}). Careful ≤${Math.round(tierInfo.careful)}% · Standard ≤${Math.round(tierInfo.standard)}% · Generous ≤${Math.round(tierInfo.generous)}%. ${guideline.note}`
           : `${cat}: guideline is ${guideline.aim}% or less of income. Add income transactions to see your %.`)
       : null;
 
-    const iconColor = overBudget ? "#c0392b" : "var(--muted)";
+    const iconColor = tierInfo.overGuideline ? "#c0392b" : "var(--muted)";
     const iconHtml = tooltipText
       ? `<span title="${tooltipText.replace(/"/g, "&quot;")}" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1.5px solid ${iconColor};color:${iconColor};font-size:9px;font-weight:700;cursor:help;flex-shrink:0;line-height:1;margin-left:4px;vertical-align:middle;">i</span>`
       : "";
 
     return '<div style="margin:0.5rem 0;">' +
       '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">' +
-        '<span style="font-size:0.88rem;font-weight:600;color:var(--navy);display:inline-flex;align-items:center;">' + escapeHtml(cat) + iconHtml + '</span>' +
+        '<span style="font-size:0.88rem;font-weight:600;color:var(--navy);display:inline-flex;align-items:center;">' + escapeHtml(cat) + iconHtml + tierBadgeHtml + '</span>' +
         '<span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">' + fmtMoney(amt) + ' · ' + spendPct + '%' + (incomePct != null ? ' · ' + incomePct + '% income' : '') + '</span>' +
       '</div>' +
       '<div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">' +
-        '<div style="background:' + (overBudget ? '#e8a028' : 'var(--teal)') + ';width:' + barPct + '%;height:8px;border-radius:999px;transition:width 0.3s;"></div>' +
+        '<div style="background:' + (tierInfo.overGuideline ? '#e8a028' : 'var(--teal)') + ';width:' + barPct + '%;height:8px;border-radius:999px;transition:width 0.3s;"></div>' +
       '</div>' +
-      (overBudget && guideline ? `<p style='font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;'>${escapeHtml(guideline.note)} Aim for ${guideline.aim}% or less. You are at ${incomePct}%.</p>` : '') +
+      (tierInfo.overGuideline && guideline ? `<p style='font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;'>${escapeHtml(guideline.note)} Aim for ${guideline.aim}% or less. You are at ${incomePct}%.</p>` : '') +
     '</div>';
   }
 
