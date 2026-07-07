@@ -132,6 +132,7 @@
     <section id="screen-merchants" class="screen">
       <h2 style="margin:0;color:var(--navy);">Quick category check</h2>
       <p class="small">Choose once per merchant — we apply it to all matching transactions.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;">💡 Doesn't fit anywhere well? <strong>Miscellaneous</strong> is a fine home for it — that's different from leaving it as Unknown, which we'll keep asking about.</p>
       <div id="merchant-list"></div>
       <button type="button" class="btn btn-primary" id="btn-merchants-done">Continue →</button>
     </section>
@@ -217,6 +218,10 @@
         </div>
         <p class="small" id="wants-tier-detail" style="margin-top:0.3rem;"></p>
         <div id="worst-offender-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;font-size:0.85rem;color:#7a5000;"></div>
+        <div id="uncategorized-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;border-radius:8px;font-size:0.85rem;">
+          <span id="uncategorized-text"></span>
+          <button type="button" class="btn btn-secondary" id="btn-categorize-now" style="width:auto;margin:0.4rem 0 0;padding:0.35rem 0.8rem;font-size:0.82rem;">Categorize now →</button>
+        </div>
       </div>
 
       <div class="stat-row">
