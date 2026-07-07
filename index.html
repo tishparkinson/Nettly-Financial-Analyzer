@@ -137,7 +137,10 @@
       <p class="small">Choose once per merchant — we apply it to all matching transactions.</p>
       <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;">💡 Doesn't fit anywhere well? <strong>Miscellaneous</strong> is a fine home for it — that's different from leaving it as Unknown, which we'll keep asking about.</p>
       <div id="merchant-list"></div>
-      <button type="button" class="btn btn-primary" id="btn-merchants-done">Continue →</button>
+      <div id="merchant-batch-footer" style="margin-top:0.75rem;">
+        <button type="button" class="btn btn-primary" id="btn-merchants-more" style="display:none;">Save & do 8 more →</button>
+        <button type="button" class="btn btn-secondary" id="btn-merchants-done">Continue →</button>
+      </div>
     </section>
 
     <!-- WEEK-BY-WEEK TRANSACTION REVIEW -->
