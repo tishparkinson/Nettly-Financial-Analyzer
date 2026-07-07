@@ -156,6 +156,52 @@ export const MERCHANT_RULES = [
   { re: /capital one|credit one|payment thank you|card payment/i, cat: "Miscellaneous", conf: 0.6 }
 ];
 
+/**
+ * Budget guidelines: % of monthly take-home income considered reasonable for
+ * each category. `aim` is the existing "Standard" ceiling (unchanged from
+ * before). Careful/Generous bands are derived from it (half and 1.5x) rather
+ * than hand-picked per category — that keeps the three tiers internally
+ * consistent instead of guessing three new numbers for every category.
+ * Above the Generous ceiling is flagged as worth a look, not "bad."
+ */
+export const BUDGET_GUIDELINES = {
+  "Overall Wants": { aim: 30, note: "A common rule of thumb (the \"50/30/20\" guideline) targets about 30% of take-home for wants overall." },
+  "Housing": { aim: 30, note: "Aim to keep housing under 30% of take-home." },
+  "Transportation": { aim: 15, note: "Most budgets target transportation under 15% of take-home." },
+  "Groceries": { aim: 12, note: "A common grocery target is under 12% of take-home." },
+  "Dining Out": { aim: 8, note: "Dining out tends to add up — many households aim for under 8%." },
+  "Fast Food": { aim: 5, note: "Fast food under 5% of take-home keeps it manageable." },
+  "Coffee & Convenience": { aim: 4, note: "Coffee and convenience stops can sneak up — under 4% is a common target." },
+  "Utilities": { aim: 8, note: "Utilities typically run 5–8% of take-home." },
+  "Insurance": { aim: 20, note: "Insurance (all types) often lands between 10–20% of take-home." },
+  "Healthcare": { aim: 8, note: "Healthcare costs vary widely — many budgets target under 8%." },
+  "Subscriptions": { aim: 5, note: "Subscriptions are easy to accumulate — under 5% is a reasonable cap." },
+  "Personal Care": { aim: 5, note: "Personal care typically runs 3–5% of take-home." },
+  "Charity & Donations": { aim: 10, note: "Many aim to give 5–10% — whatever fits your values and situation." },
+  "Religious Contribution": { aim: 10, note: "Tithing and religious giving are deeply personal — this is just for awareness." },
+  "ATM & Bank Fees": { aim: 1, note: "Bank fees ideally stay under 1% of take-home — most can be avoided entirely." },
+  "Gifts": { aim: 5, note: "Gift spending often spikes seasonally — under 5% annually is a common guideline." }
+};
+
+export const SPENDING_TIERS = ["Careful", "Standard", "Generous"];
+
+/**
+ * Given a % of income spent in a category (or overall), returns which of the
+ * three non-judgmental tiers it falls in, plus whether it's beyond the
+ * "Generous" ceiling entirely (i.e. worth a second look).
+ */
+export function getSpendingTier(pctOfIncome, guideline) {
+  if (!guideline || pctOfIncome == null) return { tier: null, overGuideline: false };
+  const careful = guideline.aim * 0.5;
+  const standard = guideline.aim;
+  const generous = guideline.aim * 1.5;
+  if (pctOfIncome <= careful) return { tier: "Careful", overGuideline: false, careful, standard, generous };
+  if (pctOfIncome <= standard) return { tier: "Standard", overGuideline: false, careful, standard, generous };
+  if (pctOfIncome <= generous) return { tier: "Generous", overGuideline: false, careful, standard, generous };
+  return { tier: "Generous", overGuideline: true, careful, standard, generous };
+}
+
+
 export function isNeedCategory(category, overrides = {}) {
   if (overrides[category] === "need") return true;
   if (overrides[category] === "want") return false;
