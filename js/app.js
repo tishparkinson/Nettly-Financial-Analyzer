@@ -31,7 +31,8 @@ import {
   safetyNetBuilderSuggestions,
   incomeAllocationTrend,
   smallPurchaseBlindness,
-  detectSpendingSprees
+  detectSpendingSprees,
+  safeSpendingUntilPayday
 } from "./patterns.js";
 import {
   loadState,
@@ -1288,7 +1289,7 @@ function renderWhatToDo(txs) {
         return `<div style="margin:${i === 0 ? "0" : "0.6rem"} 0 0.6rem;padding:0.65rem 0.75rem;background:${i === 0 ? "#e8f4f4" : "#f8f9fa"};border:1px solid ${i === 0 ? "#c5dede" : "var(--border)"};border-radius:8px;">
           <div style="font-size:0.72rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:0.02em;">${label}</div>
           <div style="font-size:0.88rem;color:var(--navy);margin-top:0.2rem;">${escapeHtml(s.category)}${tierBadge}</div>
-          <p class="small" style="margin-top:0.25rem;">${escapeHtml(s.summary)} <span style="color:var(--muted);">(you're at ${fmtMoney(s.mtdAmt)} of ${fmtMoney(s.baselineAmt)} typical so far this month.)</span></p>
+          <p class="small" style="margin-top:0.25rem;">${escapeHtml(s.summary)} <span style="color:var(--muted);">(you're at ${fmtMoney(s.currentAmt)} of ${fmtMoney(s.baselineAmt)} typical for this cycle.)</span></p>
         </div>`;
       }).join("");
     }
@@ -1353,6 +1354,40 @@ function renderWhatToDo(txs) {
   }
 }
 
+function renderSafeSpendingBox() {
+  const rangeEl = document.getElementById("safe-spending-range");
+  const daysEl = document.getElementById("safe-spending-days");
+  const detailEl = document.getElementById("safe-spending-detail");
+  const billsEl = document.getElementById("safe-spending-bills");
+  if (!rangeEl || !billsEl) return;
+
+  const safe = safeSpendingUntilPayday(state.transactions);
+  if (!safe.available) {
+    rangeEl.textContent = "—";
+    daysEl.textContent = "";
+    detailEl.textContent = safe.reason || "";
+    billsEl.innerHTML = "";
+    return;
+  }
+
+  rangeEl.textContent = `${fmtMoney(safe.rangeLow)} – ${fmtMoney(safe.rangeHigh)}`;
+  daysEl.textContent = `${safe.daysUntilPayday} day${safe.daysUntilPayday !== 1 ? "s" : ""} until payday`;
+  detailEl.textContent = `A range, not a precise number — bills that might come in lighter than usual push you toward the higher end.`;
+
+  const paidHtml = safe.bills.paidThisCycle.length
+    ? `<div style="margin-bottom:0.3rem;"><strong>Already paid this cycle:</strong>${safe.bills.paidThisCycle.map((b) =>
+        `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ${escapeHtml(b.lastDate)}</span></div>`
+      ).join("")}</div>`
+    : "";
+  const expectedHtml = safe.bills.expectedNotYetPaid.length
+    ? `<div><strong>Expected before next payday:</strong>${safe.bills.expectedNotYetPaid.map((b) =>
+        `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`
+      ).join("")}</div>`
+    : `<p class="small">No upcoming bills detected — if that's missing something, this estimate may run high.</p>`;
+
+  billsEl.innerHTML = paidHtml + expectedHtml;
+}
+
 function renderDashboard() {
   const txs = getFilteredTransactions();
   const total = computeSafetyNetBalance(state.safetyNet);
@@ -1370,6 +1405,7 @@ function renderDashboard() {
   renderCouplesFilter();
 
   document.getElementById("overlap-notice").classList.toggle("hidden", !overlapFlag);
+  renderSafeSpendingBox();
   renderCantMissZone(txs);
   document.getElementById("months-covered").textContent = fmtMonths(months);
   const monthsSubEl = document.getElementById("months-covered-needs-sub");
