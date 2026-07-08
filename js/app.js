@@ -1,4 +1,4 @@
-import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant, categorizeMerchant } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant, categorizeMerchant, consolidateMerchantNames } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
@@ -292,6 +292,7 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   let categorized = applyCategories(added, state.merchantMemory, state.categoryNeedWant);
   categorized = applyTransferDigitMatching(categorized);
   state.transactions = state.transactions.concat(categorized);
+  state.transactions = consolidateMerchantNames(state.transactions);
   maybeShowAtmCashAlert(categorized.map((tx) => tx.category));
 
   // Auto-detect recurring transactions before review
@@ -1160,6 +1161,7 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   };
 
   state.transactions.push(tx);
+  state.transactions = consolidateMerchantNames(state.transactions);
   saveState(state);
 
   // Reset the form
