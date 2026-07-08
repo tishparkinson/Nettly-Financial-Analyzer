@@ -69,7 +69,7 @@
     <section id="screen-upload" class="screen">
       <h2 style="margin:0;color:var(--navy);">Add transactions</h2>
       <p class="small">Paste from your bank or card. Nettly figures out the format.</p>
-      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Download transactions since <strong id="cutoff-date-hint">the last 3 months</strong> from each account — enough to spot your recurring bills. Paste them one account at a time, then we'll walk you through setting your Needs.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Download transactions since <strong id="cutoff-date-hint">the last 3 months</strong> from each account. 2 months is the bare minimum for spotting recurring bills reliably — 3 gives real buffer if a bill lands a few days late or you miss one payment. Paste them one account at a time, then we'll walk you through setting your Needs.</p>
 
       <div class="card">
         <label>Account nickname</label>
@@ -300,6 +300,7 @@
         <p class="small">Concrete options, calculated from your own numbers — no single "right" choice, just what's realistic this month.</p>
         <div id="safety-net-suggestions"></div>
         <div id="impulse-spending-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <div id="visit-frequency-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="income-allocation-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="small-purchase-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <details style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);">
