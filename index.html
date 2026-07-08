@@ -69,7 +69,7 @@
     <section id="screen-upload" class="screen">
       <h2 style="margin:0;color:var(--navy);">Add transactions</h2>
       <p class="small">Paste from your bank or card. Nettly figures out the format.</p>
-      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Download transactions since <strong id="cutoff-date-hint">the last 45 days</strong> from each account. Paste them one account at a time — you'll review them week by week before seeing your dashboard.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-top:0.5rem;">💡 <strong>Tip:</strong> Download transactions since <strong id="cutoff-date-hint">the last 3 months</strong> from each account — enough to spot your recurring bills. Paste them one account at a time, then we'll walk you through setting your Needs.</p>
 
       <div class="card">
         <label>Account nickname</label>
@@ -102,16 +102,44 @@
       </div>
     </section>
 
-    <!-- MERCHANT REVIEW (kept for bulk merchant fixes) -->
-    <section id="screen-merchants" class="screen">
-      <h2 style="margin:0;color:var(--navy);">Quick category check</h2>
-      <p class="small">Choose once per merchant — we apply it to all matching transactions.</p>
-      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;">💡 Doesn't fit anywhere well? <strong>Miscellaneous</strong> is a fine home for it — that's different from leaving it as Unknown, which we'll keep asking about.</p>
-      <div id="merchant-list"></div>
-      <div id="merchant-batch-footer" style="margin-top:0.75rem;">
-        <button type="button" class="btn btn-primary" id="btn-merchants-more" style="display:none;">Save & do 8 more →</button>
-        <button type="button" class="btn btn-secondary" id="btn-merchants-done">Continue →</button>
+    <!-- GUIDED NEEDS WIZARD -->
+    <section id="screen-needs-wizard" class="screen">
+      <div id="wizard-checklist" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.75rem;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
+        <h2 style="margin:0;color:var(--navy);" id="wizard-slot-title">Set your Needs</h2>
+        <span class="small" id="wizard-progress"></span>
       </div>
+      <p class="small" id="wizard-slot-hint"></p>
+      <div id="wizard-merchant-list"></div>
+      <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap;">
+        <button type="button" class="btn btn-ghost" id="btn-wizard-none" style="flex:1;margin:0;">None — not a separate bill for me</button>
+        <button type="button" class="btn btn-primary" id="btn-wizard-continue" style="flex:1;margin:0;">Continue →</button>
+      </div>
+    </section>
+
+    <!-- GUIDED NEEDS WIZARD: CUSTOM NEED STEP -->
+    <section id="screen-needs-custom" class="screen">
+      <h2 style="margin:0;color:var(--navy);">Any other regular needs?</h2>
+      <p class="small">Things like tuition, school fees, or childcare — anything necessary that didn't fit the list above. Skip if you're done.</p>
+      <div class="card">
+        <label>What is it?</label>
+        <input id="wizard-custom-label" placeholder="e.g. Tuition, School Fees, Childcare">
+        <label>Which merchant(s) does it match?</label>
+        <div id="wizard-custom-merchant-list"></div>
+        <button type="button" class="btn btn-secondary" id="btn-wizard-add-custom">Add this need</button>
+      </div>
+      <div id="wizard-custom-added" class="small" style="margin:0.5rem 0;"></div>
+      <button type="button" class="btn btn-primary" id="btn-wizard-custom-done">Done — finish setting Needs →</button>
+    </section>
+
+    <!-- GUIDED NEEDS WIZARD: SUMMARY -->
+    <section id="screen-needs-summary" class="screen">
+      <h2 style="margin:0;color:var(--navy);">Ready to finish?</h2>
+      <div class="card">
+        <p id="wizard-summary-text"></p>
+      </div>
+      <p class="small">Everything else — every merchant you didn't mark as a Need — will be set to Want. You can always change any individual purchase later from the dashboard.</p>
+      <button type="button" class="btn btn-primary" id="btn-wizard-finish">Looks right — finish →</button>
     </section>
 
     <!-- WEEK-BY-WEEK TRANSACTION REVIEW -->
@@ -213,7 +241,7 @@
 
         <div id="uncategorized-alert" class="hidden" style="margin-top:0.6rem;padding:0.6rem 0.75rem;border-radius:8px;font-size:0.85rem;">
           <span id="uncategorized-text"></span>
-          <button type="button" class="btn btn-secondary" id="btn-categorize-now" style="width:auto;margin:0.4rem 0 0;padding:0.35rem 0.8rem;font-size:0.82rem;">Categorize now →</button>
+          <button type="button" class="btn btn-secondary" id="btn-categorize-now" style="width:auto;margin:0.4rem 0 0;padding:0.35rem 0.8rem;font-size:0.82rem;">Set Need/Want now →</button>
         </div>
 
         <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
@@ -268,7 +296,6 @@
         <h3>Here's What To Do</h3>
         <p class="small">Concrete options, calculated from your own numbers — no single "right" choice, just what's realistic this month.</p>
         <div id="safety-net-suggestions"></div>
-        <div id="convenience-tax-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="impulse-spending-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="income-allocation-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="small-purchase-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
@@ -348,12 +375,6 @@
         </div>
         <p class="small" style="margin-top:0.35rem;">Timing, trends, and unusual charges — calculated directly from your transactions, no AI involved.</p>
         <div id="pattern-insights-list"></div>
-      </div>
-
-      <div class="card">
-        <h3>Review &amp; Fix Categories</h3>
-        <p class="small">Change a category here and it applies to all transactions from that merchant.</p>
-        <div id="cat-review-list"></div>
       </div>
 
       <div class="card">
