@@ -1,8 +1,8 @@
-import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant, BUDGET_GUIDELINES, getSpendingTier } from "./categories.js";
+import { CATEGORIES, DEFAULT_TAGS, CLOTHING_TAGS, TRANSPORTATION_TAGS, ATM_CASH_TAGS, normalizeMerchant, categorizeMerchant } from "./categories.js";
 import { parseTransactions, dedupeTransactions } from "./parser.js";
 import {
   applyCategories,
-  merchantsNeedingReview,
+  candidateMerchantsForWizard,
   averageNeedsSpending,
   averageTotalSpending,
   computeMonthsCovered,
@@ -15,7 +15,7 @@ import {
   updateStreaks,
   updateRecords,
   tagSummaries,
-  uncategorizedSummary,
+  unconfirmedNeedWantSummary,
   cashGapSummary,
   completeFinancialPicture,
   computeGrowthStreak
@@ -23,10 +23,9 @@ import {
 import {
   analyzeSpendingPatterns,
   overallWantsTier,
-  worstOffendingWantCategory,
-  topWantCategoryByMonth,
+  worstOffendingWantMerchant,
+  topWantMerchantByMonth,
   overallWantsTierByMonth,
-  convenienceTax,
   safetyNetBuilderSuggestions,
   incomeAllocationTrend,
   smallPurchaseBlindness,
@@ -53,7 +52,9 @@ const screens = {
   gate: document.getElementById("screen-gate"),
   home: document.getElementById("screen-home"),
   upload: document.getElementById("screen-upload"),
-  merchants: document.getElementById("screen-merchants"),
+  needsWizard: document.getElementById("screen-needs-wizard"),
+  needsCustom: document.getElementById("screen-needs-custom"),
+  needsSummary: document.getElementById("screen-needs-summary"),
   review: document.getElementById("screen-review"),
   safety: document.getElementById("screen-safety"),
   dashboard: document.getElementById("screen-dashboard")
@@ -67,7 +68,7 @@ function show(name) {
     const hint = document.getElementById("cutoff-date-hint");
     if (hint) {
       const d = new Date();
-      d.setDate(d.getDate() - 45);
+      d.setDate(d.getDate() - 90);
       const label = d.toLocaleDateString("en-US", { month: "long", day: "numeric" });
       hint.textContent = label;
     }
@@ -308,14 +309,8 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   pendingPaste = [];
   saveState(state);
 
-  const unknownCount = state.transactions.filter((tx) => tx.category === "Unknown").length;
-  const unknownPct = state.transactions.length > 0 ? unknownCount / state.transactions.length : 0;
-  const review = merchantsNeedingReview(state.transactions);
-  // Force review if many unknowns OR if any merchants need review
-  if (review.length || unknownPct > 0.15) {
-    merchantReviewDoneCount = 0;
-    renderMerchantReview(review, unknownPct);
-    show("merchants");
+  if (candidateMerchantsForWizard(state.transactions, state.merchantNeedWant || {}).length) {
+    startNeedsWizard(false);
   } else {
     show("safety");
     renderSafetySummary();
@@ -323,115 +318,158 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 });
 
 // --- Merchants ---
-const MERCHANT_REVIEW_BATCH_SIZE = 8;
-let merchantReviewDoneCount = 0; // cumulative across batches, for the "nice, X done!" framing
 
-function renderMerchantReview(review, unknownPct = 0) {
-  const container = document.getElementById("merchant-list");
-  // Also include Unknown transactions not in review list
-  const unknownMerchants = new Map();
-  for (const tx of state.transactions) {
-    if (tx.category === "Unknown") {
-      const m = tx.merchant || tx.description.slice(0, 40);
-      if (!unknownMerchants.has(m)) unknownMerchants.set(m, { merchant: m, count: 0, sample: tx.description, category: "Unknown" });
-      unknownMerchants.get(m).count++;
-    }
+
+// ═══════════════════════════════════════════════════════
+// GUIDED NEEDS WIZARD
+// ═══════════════════════════════════════════════════════
+const NEED_WIZARD_SLOTS = [
+  { key: "housing", label: "Housing", hint: "Your rent or mortgage payment." },
+  { key: "utilities", label: "Utilities", hint: "Electric, gas, water, sewer, trash — pick as many as apply. If these are included in rent, choose None." },
+  { key: "debt", label: "Debt & Credit Payments", hint: "Credit cards, loans, anything you make required payments on. Include the full payment even if it's more than the minimum — it's still necessary, not discretionary." },
+  { key: "transportation", label: "Transportation", hint: "Car payment, gas, transit pass — regular transportation costs." },
+  { key: "groceries", label: "Groceries", hint: "Your regular grocery store(s)." },
+  { key: "healthcare", label: "Healthcare", hint: "Doctor, pharmacy, health insurance premiums." },
+  { key: "insurance", label: "Insurance", hint: "Auto, home/renters, life — any insurance not already covered above." },
+  { key: "phone", label: "Phone", hint: "Your phone bill." }
+];
+
+let wizardSlotIndex = 0;
+let wizardConfirmedNeeds = {}; // merchant -> "need", accumulated across the whole wizard run
+let wizardSlotSelections = new Set(); // merchants checked in the CURRENT slot, before Continue is clicked
+let wizardCustomNeeds = []; // [{ label, merchants: [...] }]
+let wizardReturnsToDashboard = false;
+
+function startNeedsWizard(returnsToDashboard) {
+  wizardReturnsToDashboard = returnsToDashboard;
+  wizardSlotIndex = 0;
+  wizardConfirmedNeeds = {};
+  wizardCustomNeeds = [];
+  showFloatingBtn();
+  renderWizardSlot();
+  show("needsWizard");
+}
+
+function currentWizardConfirmedMerchants() {
+  // Merges already-saved state with what's been confirmed so far this run,
+  // so later slots never re-offer a merchant already claimed earlier.
+  return { ...(state.merchantNeedWant || {}), ...wizardConfirmedNeeds };
+}
+
+function renderWizardSlot() {
+  const slot = NEED_WIZARD_SLOTS[wizardSlotIndex];
+  wizardSlotSelections = new Set();
+
+  document.getElementById("wizard-slot-title").textContent = slot.label;
+  document.getElementById("wizard-slot-hint").textContent = slot.hint;
+  document.getElementById("wizard-progress").textContent = `Step ${wizardSlotIndex + 1} of ${NEED_WIZARD_SLOTS.length}`;
+
+  const candidates = candidateMerchantsForWizard(state.transactions, currentWizardConfirmedMerchants());
+  const listEl = document.getElementById("wizard-merchant-list");
+
+  if (!candidates.length) {
+    listEl.innerHTML = `<p class="small">No remaining merchants to choose from.</p>`;
+  } else {
+    listEl.innerHTML = candidates.map((c) => `
+      <label class="wizard-merchant-row" style="display:flex;align-items:center;gap:0.6rem;padding:0.6rem 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <input type="checkbox" class="wizard-merchant-check" value="${escapeAttr(c.merchant)}" style="width:auto;flex-shrink:0;">
+        <span style="flex:1;min-width:0;">
+          <span style="font-weight:600;color:var(--navy);">${escapeHtml(c.merchant)}</span>${c.isRecurring ? ' <span class="small" style="color:var(--teal);">· recurring</span>' : ""}
+          <div class="small">${fmtMoney(c.total)} total · seen ${c.count} time${c.count > 1 ? "s" : ""}</div>
+        </span>
+      </label>
+    `).join("");
   }
-  const allReview = [...review];
-  for (const [m, g] of unknownMerchants) {
-    if (!allReview.find((r) => r.merchant === m)) allReview.push(g);
-  }
-  allReview.sort((a, b) => b.count - a.count);
-
-  const batch = allReview.slice(0, MERCHANT_REVIEW_BATCH_SIZE);
-  const remainingAfterBatch = allReview.length - batch.length;
-
-  const accomplishedHtml = merchantReviewDoneCount > 0
-    ? `<p class="small" style="color:var(--teal);font-weight:600;margin-bottom:0.5rem;">✓ ${merchantReviewDoneCount} categorized so far.</p>`
-    : "";
-
-  const warningHtml = unknownPct > 0.15
-    ? `<div style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.75rem 1rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;">
-        <strong>${Math.round(unknownPct * 100)}% of your transactions are uncategorized.</strong>
-        Categorizing them now makes your dashboard far more useful. Set a category for each merchant below — it applies to all matching transactions.
-       </div>`
-    : "";
-
-  const deferredHtml = remainingAfterBatch > 0
-    ? `<p class="small" style="margin-top:0.5rem;">${remainingAfterBatch} more after this batch — do as many rounds as you'd like, or stop anytime and pick it up later from the dashboard.</p>`
-    : "";
-
-  container.innerHTML = accomplishedHtml + warningHtml +
-    `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-      <span class="small" id="merchant-review-progress-label">0 of ${batch.length} set</span>
-    </div>
-    <div style="background:var(--border);border-radius:999px;height:6px;margin-bottom:0.75rem;">
-      <div id="merchant-review-progress-bar" style="background:var(--teal);height:6px;border-radius:999px;transition:width 0.3s;width:0%;"></div>
-    </div>` +
-    batch.map((g) => `
-    <div class="merchant-review" data-merchant="${escapeAttr(g.merchant)}">
-      <strong>${escapeHtml(g.merchant)}</strong>
-      <span class="small"> — seen ${g.count} time${g.count > 1 ? "s" : ""}</span>
-      <label>Category (applies to all)</label>
-      <select class="merchant-cat">${CATEGORIES.map((cat) => `<option${cat === (g.category || "Unknown") ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}</select>
-    </div>
-  `).join("") + deferredHtml;
-
-  const moreBtn = document.getElementById("btn-merchants-more");
-  if (moreBtn) moreBtn.style.display = remainingAfterBatch > 0 ? "block" : "none";
-
-  updateMerchantReviewProgress();
-  container.querySelectorAll(".merchant-cat").forEach((sel) => {
-    sel.addEventListener("change", updateMerchantReviewProgress);
-  });
 }
 
-function updateMerchantReviewProgress() {
-  const rows = document.querySelectorAll(".merchant-review");
-  const total = rows.length;
-  let done = 0;
-  rows.forEach((row) => {
-    const sel = row.querySelector(".merchant-cat");
-    if (sel && sel.value !== "Unknown") done++;
-  });
-  const label = document.getElementById("merchant-review-progress-label");
-  const bar = document.getElementById("merchant-review-progress-bar");
-  if (label) label.textContent = `${done} of ${total} set`;
-  if (bar) bar.style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : "0%";
-}
-
-/** Saves whatever the current batch's dropdowns are set to. Returns how many rows were saved. */
-function saveCurrentMerchantBatch() {
-  const chosenCats = [];
-  const rows = document.querySelectorAll(".merchant-review");
-  rows.forEach((row) => {
-    const merchant = row.dataset.merchant;
-    const cat = row.querySelector(".merchant-cat").value;
-    chosenCats.push(cat);
-    state.merchantMemory[merchant] = cat;
-    state.transactions = state.transactions.map((tx) => {
-      if (tx.merchant === merchant) return { ...tx, category: cat, confidence: 1 };
-      return tx;
-    });
-  });
-  saveState(state);
-  maybeShowAtmCashAlert(chosenCats);
-  merchantReviewDoneCount += rows.length;
-  return rows.length;
-}
-
-document.getElementById("btn-merchants-more")?.addEventListener("click", () => {
-  saveCurrentMerchantBatch();
-  const review = merchantsNeedingReview(state.transactions);
-  renderMerchantReview(review, 0);
-  window.scrollTo(0, 0);
+document.getElementById("wizard-merchant-list")?.addEventListener("change", (e) => {
+  const cb = e.target.closest(".wizard-merchant-check");
+  if (!cb) return;
+  if (cb.checked) wizardSlotSelections.add(cb.value);
+  else wizardSlotSelections.delete(cb.value);
 });
 
-document.getElementById("btn-merchants-done").addEventListener("click", () => {
-  saveCurrentMerchantBatch();
-  merchantReviewDoneCount = 0;
-  if (merchantReviewReturnsToDashboard) {
-    merchantReviewReturnsToDashboard = false;
+function advanceWizardSlot() {
+  for (const m of wizardSlotSelections) wizardConfirmedNeeds[m] = "need";
+  wizardSlotIndex++;
+  if (wizardSlotIndex < NEED_WIZARD_SLOTS.length) {
+    renderWizardSlot();
+  } else {
+    renderWizardCustomStep();
+    show("needsCustom");
+  }
+}
+
+document.getElementById("btn-wizard-continue")?.addEventListener("click", advanceWizardSlot);
+document.getElementById("btn-wizard-none")?.addEventListener("click", () => {
+  wizardSlotSelections = new Set(); // explicit "None" — nothing from this slot counts
+  advanceWizardSlot();
+});
+
+function renderWizardCustomStep() {
+  document.getElementById("wizard-custom-label").value = "";
+  const listEl = document.getElementById("wizard-custom-merchant-list");
+  const candidates = candidateMerchantsForWizard(state.transactions, currentWizardConfirmedMerchants());
+  listEl.innerHTML = candidates.length
+    ? candidates.map((c) => `
+      <label style="display:flex;align-items:center;gap:0.6rem;padding:0.4rem 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <input type="checkbox" class="wizard-custom-check" value="${escapeAttr(c.merchant)}" style="width:auto;flex-shrink:0;">
+        <span class="small">${escapeHtml(c.merchant)} — ${fmtMoney(c.total)} total</span>
+      </label>
+    `).join("")
+    : `<p class="small">Nothing left to choose from.</p>`;
+  renderWizardCustomAddedList();
+}
+
+function renderWizardCustomAddedList() {
+  const el = document.getElementById("wizard-custom-added");
+  el.innerHTML = wizardCustomNeeds.length
+    ? "Added: " + wizardCustomNeeds.map((n) => `<strong>${escapeHtml(n.label)}</strong> (${n.merchants.length} merchant${n.merchants.length !== 1 ? "s" : ""})`).join(", ")
+    : "";
+}
+
+document.getElementById("btn-wizard-add-custom")?.addEventListener("click", () => {
+  const label = document.getElementById("wizard-custom-label").value.trim();
+  const checked = [...document.querySelectorAll(".wizard-custom-check:checked")].map((cb) => cb.value);
+  if (!label || !checked.length) {
+    alert("Give it a name and select at least one merchant.");
+    return;
+  }
+  for (const m of checked) wizardConfirmedNeeds[m] = "need";
+  wizardCustomNeeds.push({ label, merchants: checked });
+  renderWizardCustomStep();
+});
+
+document.getElementById("btn-wizard-custom-done")?.addEventListener("click", () => {
+  renderWizardSummary();
+  show("needsSummary");
+});
+
+function renderWizardSummary() {
+  const needCount = Object.keys(wizardConfirmedNeeds).length;
+  const remaining = candidateMerchantsForWizard(state.transactions, currentWizardConfirmedMerchants()).length;
+  document.getElementById("wizard-summary-text").textContent =
+    `${needCount} merchant${needCount !== 1 ? "s" : ""} marked as Needs. ${remaining} other merchant${remaining !== 1 ? "s" : ""} will be set to Want.`;
+}
+
+document.getElementById("btn-wizard-finish")?.addEventListener("click", () => {
+  if (!state.merchantNeedWant) state.merchantNeedWant = {};
+  const allConfirmed = currentWizardConfirmedMerchants();
+
+  // Sweep every remaining spend merchant to "want" — everything not
+  // explicitly claimed as a Need becomes a Want automatically.
+  const remaining = candidateMerchantsForWizard(state.transactions, allConfirmed);
+  for (const c of remaining) allConfirmed[c.merchant] = "want";
+
+  state.merchantNeedWant = allConfirmed;
+  state.transactions = state.transactions.map((tx) => {
+    const key = tx.merchant || (tx.description || "").slice(0, 40);
+    const nw = allConfirmed[key];
+    return nw ? { ...tx, needWant: nw } : tx;
+  });
+  saveState(state);
+
+  if (wizardReturnsToDashboard) {
     renderDashboard();
     show("dashboard");
   } else {
@@ -439,8 +477,11 @@ document.getElementById("btn-merchants-done").addEventListener("click", () => {
   }
 });
 
+document.getElementById("btn-categorize-now")?.addEventListener("click", () => {
+  startNeedsWizard(true);
+});
 
-// ═══════════════════════════════════════════════════════
+
 // WEEK-BY-WEEK TRANSACTION REVIEW
 // ═══════════════════════════════════════════════════════
 let reviewWeeks = [];      // [{label, txIds}] sorted newest→oldest
@@ -569,20 +610,12 @@ function renderReviewWeek(acct) {
       </div>
       <div style="font-size:0.9rem;margin-bottom:0.6rem;word-break:break-word;">${escapeHtml(tx.description.slice(0, 60))}</div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.4rem;margin-bottom:0.5rem;">
-        <div>
-          <label style="font-size:0.75rem;margin-bottom:0.2rem;">Category</label>
-          <select class="review-cat" data-tx-id="${escapeAttr(tx.id)}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:100%;">
-            ${CATEGORIES.map((cat) => `<option${cat === tx.category ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}
-          </select>
-        </div>
-        <div>
-          <label style="font-size:0.75rem;margin-bottom:0.2rem;">Need or Want?</label>
-          <select class="review-nw" data-tx-id="${escapeAttr(tx.id)}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:100%;">
-            <option value="need"${tx.needWant === "need" ? " selected" : ""}>Need</option>
-            <option value="want"${tx.needWant === "want" ? " selected" : ""}>Want</option>
-          </select>
-        </div>
+      <div style="margin-bottom:0.5rem;">
+        <label style="font-size:0.75rem;margin-bottom:0.2rem;">Need or Want?</label>
+        <select class="review-nw" data-tx-id="${escapeAttr(tx.id)}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:100%;">
+          <option value="need"${tx.needWant === "need" ? " selected" : ""}>Need</option>
+          <option value="want"${tx.needWant === "want" ? " selected" : ""}>Want</option>
+        </select>
       </div>
 
       <div>
@@ -656,13 +689,6 @@ function renderReviewWeek(acct) {
       </div>
     </div>`).join("");
 
-  // Wire category change → save immediately
-  container.querySelectorAll(".review-cat").forEach((sel) => {
-    sel.addEventListener("change", () => {
-      saveReviewTx(sel.dataset.txId, sel.value, null, null, null, null);
-      maybeShowAtmCashAlert(sel.value);
-    });
-  });
   container.querySelectorAll(".review-nw").forEach((sel) => {
     sel.addEventListener("change", () => saveReviewTx(sel.dataset.txId, null, sel.value, null, null, null));
   });
@@ -1059,21 +1085,11 @@ function toggleTagOnTx(txId) {
 // log it by hand. Entries are stored under a "Cash Wallet" account like any
 // other transaction — that's what lets a future "cash withdrawn vs. cash
 // logged" comparison work without any special-casing.
-const CASH_ENTRY_EXCLUDED_CATEGORIES = new Set(["Income", "Interest Income", "One-Time Income", "ATM Withdrawal / Cash"]);
 let cashEntryTags = [];
 
 function uid() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "tx-" + Math.random().toString(36).slice(2, 11);
-}
-
-function populateCashEntryCategoryOptions() {
-  const sel = document.getElementById("cash-entry-category");
-  if (!sel || sel.options.length) return;
-  sel.innerHTML = CATEGORIES
-    .filter((c) => !CASH_ENTRY_EXCLUDED_CATEGORIES.has(c))
-    .map((c) => `<option>${escapeHtml(c)}</option>`)
-    .join("");
 }
 
 function renderCashEntryTagChips() {
@@ -1098,7 +1114,6 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   const amountRaw = document.getElementById("cash-entry-amount").value;
   const amount = Number(amountRaw);
   const dateInput = document.getElementById("cash-entry-date").value;
-  const category = document.getElementById("cash-entry-category").value;
   const needWant = document.getElementById("cash-entry-needwant").value;
 
   if (!desc || !amountRaw || !(amount > 0)) {
@@ -1113,6 +1128,8 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
     state.accounts.push({ nickname, type: "Cash" });
   }
 
+  const { category, confidence } = categorizeMerchant(desc, state.merchantMemory);
+
   const tx = {
     id: uid(),
     date,
@@ -1123,7 +1140,7 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
     type: "debit",
     merchant: normalizeMerchant(desc),
     category,
-    confidence: 1,
+    confidence,
     needWant,
     isReimbursement: false,
     tags: [...cashEntryTags]
@@ -1250,12 +1267,7 @@ function renderCantMissZone(txs) {
     }).join("");
   }
 
-  // Fires whenever a want-category is over its own Generous guideline —
-  // including a steady, unchanging habit. The point is to surface
-  // overspending itself, not just changes in it; trend direction is still
-  // mentioned in the message for context, it just doesn't gate whether this
-  // shows up at all.
-  const worst = worstOffendingWantCategory(txs, 90);
+  const worst = worstOffendingWantMerchant(txs, 90);
   const worstTextEl = document.getElementById("worst-offender-text");
   if (worst.available) {
     alertEl.classList.remove("hidden");
@@ -1267,12 +1279,12 @@ function renderCantMissZone(txs) {
 
   const worstHistoryEl = document.getElementById("worst-offender-history");
   if (worstHistoryEl) {
-    const history = topWantCategoryByMonth(state.transactions, 6);
+    const history = topWantMerchantByMonth(state.transactions, 6);
     worstHistoryEl.innerHTML = history.map((m) => {
       if (!m.available) return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;">${escapeHtml(m.label)}<span>No want spending</span></div>`;
       return `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;">
         <span>${escapeHtml(m.label)}</span>
-        <span>${escapeHtml(m.topCategory)} · ${fmtMoney(m.amount)}${m.pctOfIncome != null ? ` · ${m.pctOfIncome}% income` : ""}</span>
+        <span>${escapeHtml(m.topMerchant)} · ${fmtMoney(m.amount)}${m.pctOfIncome != null ? ` · ${m.pctOfIncome}% income` : ""}</span>
       </div>`;
     }).join("");
   }
@@ -1280,15 +1292,15 @@ function renderCantMissZone(txs) {
   const uncatEl = document.getElementById("uncategorized-alert");
   const uncatTextEl = document.getElementById("uncategorized-text");
   if (uncatEl && uncatTextEl) {
-    const uncat = uncategorizedSummary(state.transactions);
-    if (uncat.unknownMerchantCount > 0) {
+    const uncat = unconfirmedNeedWantSummary(state.transactions, state.merchantNeedWant || {});
+    if (uncat.unconfirmedMerchantCount > 0) {
       uncatEl.classList.remove("hidden");
       uncatEl.style.background = uncat.shouldHighlight ? "#fdecec" : "#f4f6f7";
       uncatEl.style.border = uncat.shouldHighlight ? "1px solid #f0b8b8" : "1px solid var(--border)";
       uncatEl.style.color = uncat.shouldHighlight ? "#8a2c2c" : "var(--muted)";
       uncatTextEl.textContent =
-        `${uncat.unknownMerchantCount} merchant${uncat.unknownMerchantCount > 1 ? "s" : ""} (${uncat.unknownTxCount} transaction${uncat.unknownTxCount > 1 ? "s" : ""}) still need${uncat.unknownMerchantCount > 1 ? "" : "s"} a category — ` +
-        `about ${fmtMoney(uncat.unknownSpend)} (${uncat.pctOfSpend}% of your spending) isn't reflected anywhere yet.`;
+        `${uncat.unconfirmedMerchantCount} merchant${uncat.unconfirmedMerchantCount > 1 ? "s" : ""} (${uncat.unconfirmedTxCount} transaction${uncat.unconfirmedTxCount > 1 ? "s" : ""}) still need${uncat.unconfirmedMerchantCount > 1 ? "" : "s"} Need or Want set — ` +
+        `about ${fmtMoney(uncat.unconfirmedSpend)} (${uncat.pctOfSpend}% of your spending) isn't reflected anywhere yet.`;
     } else {
       uncatEl.classList.add("hidden");
     }
@@ -1297,26 +1309,16 @@ function renderCantMissZone(txs) {
   const completenessPctEl = document.getElementById("completeness-pct");
   const completenessDetailEl = document.getElementById("completeness-detail");
   if (completenessPctEl && completenessDetailEl) {
-    const complete = completeFinancialPicture(state.transactions);
+    const complete = completeFinancialPicture(state.transactions, state.merchantNeedWant || {});
     completenessPctEl.textContent = `${complete.pct}%`;
     const parts = [];
-    if (complete.unknownSpend > 0) parts.push(`${fmtMoney(complete.unknownSpend)} uncategorized`);
+    if (complete.unconfirmedSpend > 0) parts.push(`${fmtMoney(complete.unconfirmedSpend)} without Need/Want set`);
     if (complete.cashGap > 0) parts.push(`${fmtMoney(complete.cashGap)} in withdrawn cash not yet logged`);
     completenessDetailEl.textContent = parts.length
       ? `Gaps: ${parts.join(" · ")}.`
       : "Your spending picture is fully accounted for.";
   }
 }
-
-let merchantReviewReturnsToDashboard = false;
-
-document.getElementById("btn-categorize-now")?.addEventListener("click", () => {
-  merchantReviewReturnsToDashboard = true;
-  merchantReviewDoneCount = 0;
-  const review = merchantsNeedingReview(state.transactions);
-  renderMerchantReview(review, 0);
-  show("merchants");
-});
 
 function renderWhatToDo(txs) {
   // Safety Net Builder Suggestions — Biggest Opportunity + up to 2 more
@@ -1337,21 +1339,6 @@ function renderWhatToDo(txs) {
           <p class="small" style="margin-top:0.25rem;">${escapeHtml(s.summary)} <span style="color:var(--muted);">(you're at ${fmtMoney(s.currentAmt)} of ${fmtMoney(s.baselineAmt)} typical for this cycle.)</span></p>
         </div>`;
       }).join("");
-    }
-  }
-
-  // Convenience Tax
-  const convEl = document.getElementById("convenience-tax-callout");
-  if (convEl) {
-    const conv = convenienceTax(txs, 30);
-    if (conv.available) {
-      convEl.classList.remove("hidden");
-      convEl.innerHTML = `
-        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Convenience Tax</div>
-        <p class="small" style="margin-top:0.2rem;">${fmtMoney(conv.monthlyAmt)}/mo${conv.pctOfIncome != null ? ` (${conv.pctOfIncome}% of income)` : ""} — the cost of dining out, fast food, coffee stops, and bank fees combined.
-        ${conv.breakdown.length ? conv.breakdown.map((b) => `${escapeHtml(b.category)}: ${fmtMoney(b.monthlyAmt)}`).join(" · ") : ""}</p>`;
-    } else {
-      convEl.classList.add("hidden");
     }
   }
 
@@ -1515,35 +1502,12 @@ function renderDashboard() {
   if (windowSelect) windowSelect.value = String(state.analysisWindowDays || 365);
   renderPatternInsights(txs);
 
-  populateCashEntryCategoryOptions();
   renderCashEntryTagChips();
   renderWhatToDo(txs);
 
-  renderCategoryReview(txs);
   renderTags(txs);
 }
 
-
-// Category fix in dashboard
-document.addEventListener("change", (e) => {
-  const sel = e.target.closest(".cat-fix-select");
-  if (!sel) return;
-  const txId = sel.dataset.txId;
-  const merchant = sel.dataset.merchant;
-  const newCat = sel.value;
-  // Update all transactions with same merchant
-  state.transactions = state.transactions.map((tx) => {
-    if (merchant && tx.merchant === merchant) return { ...tx, category: newCat, confidence: 1 };
-    if (tx.id === txId) return { ...tx, category: newCat, confidence: 1 };
-    return tx;
-  });
-  if (merchant) state.merchantMemory[merchant] = newCat;
-  saveState(state);
-  maybeShowAtmCashAlert(newCat);
-});
-
-
-// Budget guidelines now live in categories.js (BUDGET_GUIDELINES + getSpendingTier), shared with patterns.js
 
 // Needs vs Wants drill-down
 document.addEventListener("click", (e) => {
@@ -1562,67 +1526,22 @@ document.addEventListener("click", (e) => {
   const filtered = txs.filter((tx) => {
     if (tx.amount >= 0) return false;
     if (new Date(tx.date) < cutoff) return false;
-    const EXCLUDE = new Set(["Safety Net Contribution", "Transfer from Savings", "Transfer from Checking", "Savings", "Income", "Interest Income", "One-Time Income", "Transfer", "Unknown"]);
+    const EXCLUDE = new Set(["Safety Net Contribution", "Transfer from Savings", "Transfer from Checking", "Savings", "Income", "Interest Income", "One-Time Income", "Transfer", "ATM Withdrawal / Cash"]);
     if (EXCLUDE.has(tx.category)) return false;
-    if (tx.amount >= 0) return false; // deposits/credits excluded
     return tx.needWant === type;
   });
 
-  // Aggregate by category and merchant
-  const byCat = new Map();
   const byMerchant = new Map();
   for (const tx of filtered) {
-    const cat = tx.category || "Unknown";
     const mer = tx.merchant || tx.description.slice(0, 30);
-    byCat.set(cat, (byCat.get(cat) || 0) + Math.abs(tx.amount));
     byMerchant.set(mer, (byMerchant.get(mer) || 0) + Math.abs(tx.amount));
   }
 
-  const topCats = [...byCat.entries()].sort((a, b) => b[1] - a[1]);
-  const topMerchants = [...byMerchant.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const totalSpend = topCats.reduce((s, [, v]) => s + v, 0);
-  const maxCatAmt = topCats[0]?.[1] || 1;
+  const topMerchants = [...byMerchant.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+  const totalSpend = [...byMerchant.values()].reduce((s, v) => s + v, 0);
   const label = type === "need" ? "Needs" : "Wants";
 
-  // Build category bar chart rows with optional income % flag
-  function catRow(cat, amt) {
-    const barPct = Math.round((amt / maxCatAmt) * 100);
-    const spendPct = totalSpend > 0 ? Math.round((amt / totalSpend) * 100) : 0;
-    const guideline = BUDGET_GUIDELINES[cat];
-    const monthlyAmt = amt / 3;
-    const incomePct = monthlyIncome > 0 ? Math.round((monthlyAmt / monthlyIncome) * 100) : null;
-    const tierInfo = guideline && incomePct != null ? getSpendingTier(incomePct, guideline) : { tier: null, overGuideline: false };
-
-    const tierColors = { "Careful": "var(--teal)", "Standard": "#3a6ea5", "Generous": "#c98a1f" };
-    const tierBadgeHtml = tierInfo.tier
-      ? `<span style="font-size:0.68rem;font-weight:700;padding:0.1rem 0.45rem;border-radius:999px;margin-left:0.4rem;color:#fff;background:${tierInfo.overGuideline ? '#c0392b' : tierColors[tierInfo.tier]};">${tierInfo.overGuideline ? "Over Guideline" : tierInfo.tier}</span>`
-      : "";
-
-    const tooltipText = guideline
-      ? (incomePct != null
-          ? `${cat}: you're at ${incomePct}% of monthly income (${tierInfo.tier}${tierInfo.overGuideline ? ", above the usual Generous ceiling" : ""}). Careful ≤${Math.round(tierInfo.careful)}% · Standard ≤${Math.round(tierInfo.standard)}% · Generous ≤${Math.round(tierInfo.generous)}%. ${guideline.note}`
-          : `${cat}: guideline is ${guideline.aim}% or less of income. Add income transactions to see your %.`)
-      : null;
-
-    const iconColor = tierInfo.overGuideline ? "#c0392b" : "var(--muted)";
-    const iconHtml = tooltipText
-      ? `<span title="${tooltipText.replace(/"/g, "&quot;")}" tabindex="0" style="display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1.5px solid ${iconColor};color:${iconColor};font-size:9px;font-weight:700;cursor:help;flex-shrink:0;line-height:1;margin-left:4px;vertical-align:middle;">i</span>`
-      : "";
-
-    return '<div style="margin:0.5rem 0;">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">' +
-        '<span style="font-size:0.88rem;font-weight:600;color:var(--navy);display:inline-flex;align-items:center;">' + escapeHtml(cat) + iconHtml + tierBadgeHtml + '</span>' +
-        '<span style="font-size:0.82rem;color:var(--muted);white-space:nowrap;">' + fmtMoney(amt) + ' · ' + spendPct + '%' + (incomePct != null ? ' · ' + incomePct + '% income' : '') + '</span>' +
-      '</div>' +
-      '<div style="background:var(--border);border-radius:999px;height:8px;margin:0.25rem 0;">' +
-        '<div style="background:' + (tierInfo.overGuideline ? '#e8a028' : 'var(--teal)') + ';width:' + barPct + '%;height:8px;border-radius:999px;transition:width 0.3s;"></div>' +
-      '</div>' +
-      (tierInfo.overGuideline && guideline ? `<p style='font-size:0.78rem;color:#7a5000;background:#fef6e4;border:1px solid #f0d080;border-radius:8px;padding:0.35rem 0.6rem;margin:0.3rem 0 0;'>${escapeHtml(guideline.note)} Aim for ${guideline.aim}% or less. You are at ${incomePct}%.</p>` : '') +
-    '</div>';
-  }
-
   const detail = document.getElementById("nw-detail");
-  // Build merchant bar rows (same style as catRow)
   function merchantRow(mer, amt) {
     const barPct = Math.round((amt / (topMerchants[0]?.[1] || 1)) * 100);
     const spendPct = totalSpend > 0 ? Math.round((amt / totalSpend) * 100) : 0;
@@ -1637,35 +1556,14 @@ document.addEventListener("click", (e) => {
     </div>`;
   }
 
-  let nwView = detail.dataset.view || "categories";
-  function renderNwDetail() {
-    detail.innerHTML = `
-      <div style="margin-top:0.75rem;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.65rem;flex-wrap:wrap;gap:0.4rem;">
-          <strong style="color:var(--navy);">${label} Breakdown (90 days) · ${fmtMoney(totalSpend)}</strong>
-          <div style="display:flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;font-size:0.82rem;">
-            <button type="button" data-nw-view="categories" style="padding:0.3rem 0.65rem;border:none;cursor:pointer;background:${nwView==="categories"?"var(--navy)":"#fff"};color:${nwView==="categories"?"#fff":"var(--slate)"};">Categories</button>
-            <button type="button" data-nw-view="merchants" style="padding:0.3rem 0.65rem;border:none;cursor:pointer;background:${nwView==="merchants"?"var(--navy)":"#fff"};color:${nwView==="merchants"?"#fff":"var(--slate)"};">Merchants</button>
-          </div>
-        </div>
-        ${nwView === "categories"
-          ? (topCats.map(([cat, amt]) => catRow(cat, amt)).join("") || "<p class='small'>No transactions found.</p>")
-          : (topMerchants.map(([mer, amt]) => merchantRow(mer, amt)).join("") || "<p class='small'>No merchants found.</p>")
-        }
-        ${monthlyIncome > 0
-          ? `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Income estimate: ${fmtMoney(monthlyIncome)}/mo (90-day avg). Percentages of income are monthly averages.</p>`
-          : `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Add income transactions to unlock % of income breakdowns and budget guidance.</p>`}
-      </div>`;
-    // Wire toggle buttons
-    detail.querySelectorAll("[data-nw-view]").forEach((btn) => {
-      btn.addEventListener("click", () => {
-        nwView = btn.dataset.nwView;
-        detail.dataset.view = nwView;
-        renderNwDetail();
-      });
-    });
-  }
-  renderNwDetail();
+  detail.innerHTML = `
+    <div style="margin-top:0.75rem;">
+      <strong style="color:var(--navy);">${label} Breakdown (90 days) · ${fmtMoney(totalSpend)}</strong>
+      ${topMerchants.map(([mer, amt]) => merchantRow(mer, amt)).join("") || "<p class='small'>No merchants found.</p>"}
+      ${monthlyIncome > 0
+        ? `<p class="small" style="margin-top:0.75rem;color:var(--muted);">Income estimate: ${fmtMoney(monthlyIncome)}/mo (90-day avg).</p>`
+        : ""}
+    </div>`;
 });
 
 document.getElementById("btn-download-snapshot").addEventListener("click", () => downloadSnapshot(state));
@@ -1694,25 +1592,6 @@ To continue where things left off later, save the most recent Snapshot before re
   }
 });
 
-
-function renderCategoryReview(txs) {
-  const el = document.getElementById("cat-review-list");
-  if (!el) return;
-  const recent = txs
-    .filter((tx) => tx.amount < 0)
-    .sort((a, b) => b.date.localeCompare(a.date))
-    .slice(0, 40);
-  el.innerHTML = recent.map((tx) => `
-    <div class="tx-tag-row" style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-      <div style="flex:1;min-width:0;">
-        <div style="font-size:0.85rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(tx.date)} · ${escapeHtml(tx.description.slice(0,40))}</div>
-        <div class="small">${fmtMoney(Math.abs(tx.amount))}</div>
-      </div>
-      <select class="cat-fix-select" data-tx-id="${escapeAttr(tx.id)}" data-merchant="${escapeAttr(tx.merchant||'')}" style="font-size:0.82rem;padding:0.3rem 0.4rem;width:auto;flex-shrink:0;">
-        ${CATEGORIES.map((cat) => `<option${cat === tx.category ? " selected" : ""}>${escapeHtml(cat)}</option>`).join("")}
-      </select>
-    </div>`).join("");
-}
 
 function escapeHtml(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
