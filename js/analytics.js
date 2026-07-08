@@ -267,6 +267,47 @@ export function candidateMerchantsForWizard(transactions, confirmedMerchants = {
     });
 }
 
+/**
+ * How much you spend at each merchant, on average, per day/week/month —
+ * a simple, concrete number that's hard to get a feel for from a raw
+ * transaction list. Uses the actual span of imported data as the
+ * denominator (not each merchant's own first-to-last visit span), so every
+ * merchant's rate is directly comparable on the same footing.
+ */
+export function merchantSpendRates(transactions, topN = 15) {
+  const spendTx = transactions.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category));
+  if (!spendTx.length) return { available: false, reason: "No spending yet to break down.", rates: [] };
+
+  const dates = spendTx.map((tx) => tx.date).sort();
+  const spanDays = Math.max((new Date(dates.at(-1)) - new Date(dates[0])) / 86400000, 1);
+
+  const byMerchant = new Map();
+  for (const tx of spendTx) {
+    const m = tx.merchant || (tx.description || "").slice(0, 40);
+    if (!byMerchant.has(m)) byMerchant.set(m, { merchant: m, total: 0, count: 0 });
+    const g = byMerchant.get(m);
+    g.total += Math.abs(tx.amount);
+    g.count++;
+  }
+
+  const rates = [...byMerchant.values()]
+    .map((g) => {
+      const perDay = g.total / spanDays;
+      return {
+        merchant: g.merchant,
+        total: Math.round(g.total),
+        count: g.count,
+        perDay: Math.round(perDay * 100) / 100,
+        perWeek: Math.round(perDay * 7 * 100) / 100,
+        perMonth: Math.round(perDay * 30)
+      };
+    })
+    .sort((a, b) => b.total - a.total)
+    .slice(0, topN);
+
+  return { available: true, spanDays: Math.round(spanDays), rates };
+}
+
 export function merchantsNeedingNeedWantReview(transactions, confirmedMerchants = {}) {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
