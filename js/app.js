@@ -9,7 +9,7 @@ import {
   needsVsWants,
   detectRecurring,
   detectRecurring45,
-  subscriptionSummary,
+  recurringWantCharges,
   stabilityLabel,
   simpleInsights,
   updateStreaks,
@@ -19,6 +19,7 @@ import {
   cashGapSummary,
   completeFinancialPicture,
   computeGrowthStreak,
+  safetyNetGrowthSummary,
   merchantSpendRates
 } from "./analytics.js";
 import {
@@ -31,7 +32,8 @@ import {
   incomeAllocationTrend,
   smallPurchaseBlindness,
   detectSpendingSprees,
-  safeSpendingUntilPayday
+  safeSpendingUntilPayday,
+  visitFrequencyChange
 } from "./patterns.js";
 import {
   loadState,
@@ -329,7 +331,7 @@ const NEED_WIZARD_SLOTS = [
   { key: "housing", label: "Housing", hint: "Your rent or mortgage payment." },
   { key: "utilities", label: "Utilities", hint: "Electric, gas, water, sewer, trash — pick as many as apply. If these are included in rent, choose None." },
   { key: "debt", label: "Debt & Credit Payments", hint: "Credit cards, loans, anything you make required payments on. Include the full payment even if it's more than the minimum — it's still necessary, not discretionary." },
-  { key: "transportation", label: "Transportation", hint: "Car payment, gas, transit pass — regular transportation costs." },
+  { key: "transportation", label: "Transportation", hint: "Car payment, gas, transit pass — regular transportation costs. If a gas station is mostly your work commute, it's a Need. If a lot of your driving is trips and errands for fun, some of that gas is really part of the Want it's funding — worth keeping in mind." },
   { key: "groceries", label: "Groceries", hint: "Your regular grocery store(s)." },
   { key: "healthcare", label: "Healthcare", hint: "Doctor, pharmacy, health insurance premiums." },
   { key: "insurance", label: "Insurance", hint: "Auto, home/renters, life — any insurance not already covered above." },
@@ -1381,24 +1383,42 @@ function renderWhatToDo(txs) {
     }
   }
 
-  // Safety Net Builder Suggestions — Biggest Opportunity + up to 2 more
+  // Safety Net Builder Suggestions — Biggest Opportunity + up to 2 more, each with 3 tiers
   const suggEl = document.getElementById("safety-net-suggestions");
   if (suggEl) {
     const result = safetyNetBuilderSuggestions(state.transactions);
     if (!result.available) {
       suggEl.innerHTML = `<p class="small">${escapeHtml(result.reason || "Add more history to see suggestions here.")}</p>`;
     } else {
+      const tierColors = { small: "var(--teal)", medium: "#3a6ea5", large: "#c98a1f" };
       suggEl.innerHTML = result.suggestions.map((s, i) => {
         const label = i === 0 ? "Your Biggest Opportunity" : "Also worth considering";
-        const tierBadge = s.tier
-          ? `<span style="font-size:0.68rem;font-weight:700;padding:0.1rem 0.4rem;border-radius:999px;margin-left:0.4rem;color:#fff;background:${s.overGuideline ? "#c0392b" : "#3a6ea5"};">${s.overGuideline ? "Over Guideline" : s.tier}</span>`
-          : "";
+        const tierRows = s.tiers.filter((t) => t.reachable).map((t) => `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;padding:0.35rem 0;border-top:1px solid ${i === 0 ? "#d5e8e8" : "var(--border)"};">
+            <span style="font-size:0.78rem;font-weight:600;color:${tierColors[t.tier]};">${t.label} (−${t.cutPct}%)</span>
+            <span class="small">frees ${fmtMoney(t.freedAmt)}/${s.cyclePeriod} · $1,000 fund in ~${t.monthsToGoal}mo</span>
+          </div>`).join("");
         return `<div style="margin:${i === 0 ? "0" : "0.6rem"} 0 0.6rem;padding:0.65rem 0.75rem;background:${i === 0 ? "#e8f4f4" : "#f8f9fa"};border:1px solid ${i === 0 ? "#c5dede" : "var(--border)"};border-radius:8px;">
           <div style="font-size:0.72rem;font-weight:700;color:var(--teal);text-transform:uppercase;letter-spacing:0.02em;">${label}</div>
-          <div style="font-size:0.88rem;color:var(--navy);margin-top:0.2rem;">${escapeHtml(s.category)}${tierBadge}</div>
-          <p class="small" style="margin-top:0.25rem;">${escapeHtml(s.summary)} <span style="color:var(--muted);">(you're at ${fmtMoney(s.currentAmt)} of ${fmtMoney(s.baselineAmt)} typical for this cycle.)</span></p>
+          <div style="font-size:0.88rem;color:var(--navy);margin-top:0.2rem;">${escapeHtml(s.merchant)}</div>
+          <p class="small" style="margin-top:0.15rem;">${fmtMoney(s.currentAmt)} of ${fmtMoney(s.baselineAmt)} typical this ${s.cyclePeriod} so far.</p>
+          ${tierRows}
         </div>`;
       }).join("");
+    }
+  }
+
+  // Visit frequency creep — how often, not just how much
+  const freqEl = document.getElementById("visit-frequency-callout");
+  if (freqEl) {
+    const freq = visitFrequencyChange(state.transactions, 90);
+    if (freq.available) {
+      freqEl.classList.remove("hidden");
+      freqEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Visiting More Often</div>
+        <p class="small" style="margin-top:0.2rem;">${escapeHtml(freq.summary)}</p>`;
+    } else {
+      freqEl.classList.add("hidden");
     }
   }
 
@@ -1489,7 +1509,7 @@ function renderDashboard() {
   const monthsNeedsOnly = computeMonthsCovered(total, avgNeeds);
   const nw = needsVsWants(txs);
   const bills = detectRecurring(txs);
-  const subs = subscriptionSummary(txs);
+  const subs = recurringWantCharges(txs);
   const stability = stabilityLabel(state.safetyNetHistory);
   const insights = simpleInsights(txs);
   const records = state.personalRecords || {};
@@ -1520,8 +1540,17 @@ function renderDashboard() {
     const first = hist[0];
     const best = Math.max(...hist.map((h) => h.monthsCovered || 0));
     const cur = hist.at(-1);
-    document.getElementById("sn-history").textContent =
-      `Started ${first.date}. Highest: ${fmtMonths(best)} months. Current: ${fmtMonths(cur.monthsCovered)} months.`;
+    const growth = safetyNetGrowthSummary(hist);
+
+    let historyText = `Started ${first.date}. Highest: ${fmtMonths(best)} months. Current: ${fmtMonths(cur.monthsCovered)} months.`;
+    if (growth.available && growth.totalGrowth !== 0) {
+      const parts = [];
+      if (growth.totalGrowth > 0) parts.push(`up ${fmtMoney(growth.totalGrowth)} since you started`);
+      if (growth.lastContribution != null && growth.lastContribution > 0) parts.push(`+${fmtMoney(growth.lastContribution)} last update`);
+      if (growth.streak >= 2) parts.push(`🎉 ${growth.streak} updates in a row with growth`);
+      if (parts.length) historyText += ` ${parts.join(" · ")}.`;
+    }
+    document.getElementById("sn-history").textContent = historyText;
   }
 
   const nextM = months != null ? Math.ceil(months) + 1 : 1;
@@ -1552,8 +1581,8 @@ function renderDashboard() {
 
   document.getElementById("subs-summary").textContent =
     subs.count
-      ? `${subs.count} recurring services observed (~${fmtMoney(subs.monthly)}/mo).`
-      : "No subscription pattern detected yet.";
+      ? `${subs.count} recurring want-charge${subs.count > 1 ? "s" : ""} detected (~${fmtMoney(subs.totalMonthly)}/mo) — worth a quick audit?`
+      : "No recurring subscription-style pattern detected yet.";
 
   document.getElementById("insights-list").innerHTML = insights.map((i) => `<li>${escapeHtml(i)}</li>`).join("") ||
     "<li>Upload more history to surface patterns.</li>";
