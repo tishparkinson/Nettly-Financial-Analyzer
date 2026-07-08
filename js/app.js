@@ -356,10 +356,23 @@ function currentWizardConfirmedMerchants() {
   return { ...(state.merchantNeedWant || {}), ...wizardConfirmedNeeds };
 }
 
+function renderWizardChecklist() {
+  const el = document.getElementById("wizard-checklist");
+  if (!el) return;
+  el.innerHTML = NEED_WIZARD_SLOTS.map((slot, i) => {
+    const done = i < wizardSlotIndex;
+    const current = i === wizardSlotIndex;
+    const bg = done ? "var(--teal)" : current ? "var(--navy)" : "#f0f0f0";
+    const color = done || current ? "#fff" : "var(--muted)";
+    return `<span style="font-size:0.72rem;padding:0.2rem 0.55rem;border-radius:999px;background:${bg};color:${color};">${done ? "✓ " : ""}${escapeHtml(slot.label)}</span>`;
+  }).join("");
+}
+
 function renderWizardSlot() {
   const slot = NEED_WIZARD_SLOTS[wizardSlotIndex];
   wizardSlotSelections = new Set();
 
+  renderWizardChecklist();
   document.getElementById("wizard-slot-title").textContent = slot.label;
   document.getElementById("wizard-slot-hint").textContent = slot.hint;
   document.getElementById("wizard-progress").textContent = `Step ${wizardSlotIndex + 1} of ${NEED_WIZARD_SLOTS.length}`;
