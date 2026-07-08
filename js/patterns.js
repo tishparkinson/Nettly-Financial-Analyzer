@@ -200,6 +200,59 @@ function estimateMonthlyIncome(transactions, windowDays) {
  * last week" only makes sense for someone actually paid weekly. Falls back
  * to a 30-day cycle when no regular pay pattern is detected.
  */
+/**
+ * Flags a want-merchant where visit COUNT has jumped, not just dollar
+ * total — frequency is often a more honest signal of a forming habit than
+ * a dollar figure, which can be muddied by one big purchase. Uses the same
+ * detected pay-cycle length as pace comparisons, for the same reason.
+ */
+export function visitFrequencyChange(transactions, windowDays) {
+  const cycle = detectPayCycle(transactions, windowDays);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
+
+  const now = new Date();
+  const currentStart = new Date(now); currentStart.setDate(currentStart.getDate() - cycleDays);
+  const previousStart = new Date(now); previousStart.setDate(previousStart.getDate() - cycleDays * 2);
+
+  const wantSpend = transactions.filter((tx) => tx.needWant === "want" && isSpendTx(tx));
+  const oldestDate = wantSpend.reduce((min, tx) => (tx.date < min ? tx.date : min), wantSpend[0]?.date || null);
+  if (!oldestDate || daysBetween(new Date(), oldestDate) < cycleDays * 2) {
+    return { available: false, reason: `Need at least two ${cycleDays}-day cycles of history to compare visit frequency.` };
+  }
+
+  const byMerchant = new Map();
+  for (const tx of wantSpend) {
+    const d = new Date(tx.date);
+    const bucket = d >= currentStart ? "current" : (d >= previousStart ? "previous" : null);
+    if (!bucket) continue;
+    const m = tx.merchant || (tx.description || "").slice(0, 40);
+    if (!byMerchant.has(m)) byMerchant.set(m, { current: 0, previous: 0 });
+    byMerchant.get(m)[bucket]++;
+  }
+
+  const candidates = [...byMerchant.entries()]
+    .map(([merchant, v]) => ({ merchant, currentVisits: v.current, previousVisits: v.previous, deltaVisits: v.current - v.previous }))
+    .filter((c) => c.previousVisits >= 1 && c.deltaVisits >= 2) // meaningful jump, not noise
+    .sort((a, b) => b.deltaVisits - a.deltaVisits);
+
+  if (!candidates.length) {
+    return { available: false, reason: "No meaningful increase in visit frequency detected right now." };
+  }
+
+  const top = candidates[0];
+  const cyclePeriod = cycleDays >= 25 ? "month" : cycleDays >= 12 ? "two weeks" : "week";
+
+  return {
+    available: true,
+    merchant: top.merchant,
+    currentVisits: top.currentVisits,
+    previousVisits: top.previousVisits,
+    deltaVisits: top.deltaVisits,
+    cycleDays,
+    summary: `You've visited ${top.merchant} ${top.currentVisits} times this ${cyclePeriod}, up from ${top.previousVisits} last cycle — worth noticing, whatever the reason.`
+  };
+}
+
 export function paceComparison(transactions, windowDays) {
   const cycle = detectPayCycle(transactions, windowDays);
   const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
@@ -500,22 +553,27 @@ export function overallWantsTierByMonth(transactions, monthsBack = 6) {
 }
 
 const SAFETY_NET_STARTER_GOAL = 1000; // a common "starter emergency fund" benchmark
-const SUGGESTION_CUT_PCT = 0.20;
-const MIN_MONTHLY_FREED = 10;
+const CUT_TIERS = [
+  { key: "small", label: "Small", pct: 0.10 },
+  { key: "medium", label: "Medium", pct: 0.25 },
+  { key: "large", label: "Large", pct: 0.50 }
+];
+const MIN_MONTHLY_FREED = 5; // lower floor than before, since the "small" tier is intentionally modest
 const MAX_MONTHS_TO_GOAL = 36;
 
 /**
-/**
- * Generates concrete "cut category X by 20% → frees $Y/cycle → reaches a
- * $1,000 starter emergency fund in Z months" suggestions, one per top
- * want-category from the previous pay cycle. Uses the person's own detected
+ * Generates "cut spending at merchant X by [small/medium/large] → frees
+ * $Y/cycle → reaches a $1,000 starter emergency fund in Z months" options,
+ * one set per top want-merchant from the previous pay cycle — three
+ * aggressiveness levels per merchant so the person picks how much they want
+ * to change, not just one fixed number. Uses the person's own detected
  * pay-cycle length (weekly/biweekly/monthly) rather than calendar months —
  * most people living paycheck to paycheck think in terms of "until my next
- * payday," not "this calendar month." Doesn't ask the person to pick one —
- * shows whichever ones are still realistic THIS cycle. A suggestion is
- * dropped (not just flagged) if this cycle's spending in that category has
- * already exceeded what a 20%-lower cycle would allow — no point suggesting
- * a cut that's already off the table.
+ * payday," not "this calendar month." A tier is dropped (not just flagged)
+ * if this cycle's spending has already exceeded what that tier's reduced
+ * target would allow — no point suggesting a cut that's already off the
+ * table for this cycle, though a smaller tier might still be reachable even
+ * when a larger one isn't.
  */
 export function safetyNetBuilderSuggestions(transactions) {
   const cycle = detectPayCycle(transactions, 180);
@@ -551,28 +609,43 @@ export function safetyNetBuilderSuggestions(transactions) {
   const candidates = [];
 
   for (const [merchant, baselineAmt] of wantsByMerchant) {
-    const monthlyEquivBaseline = baselineAmt * (30 / cycleDays);
-    const freedAmt = baselineAmt * SUGGESTION_CUT_PCT; // per cycle
-    const monthlyEquivFreed = monthlyEquivBaseline * SUGGESTION_CUT_PCT;
-    if (monthlyEquivFreed < MIN_MONTHLY_FREED) continue;
-
-    const reducedTarget = baselineAmt * (1 - SUGGESTION_CUT_PCT);
     const currentAmt = currentByMerchant.get(merchant) || 0;
-    if (currentAmt > reducedTarget) continue; // already spent past the reduced target — not reachable this cycle
+    const monthlyEquivBaseline = baselineAmt * (30 / cycleDays);
 
-    const monthsToGoal = Math.ceil(SAFETY_NET_STARTER_GOAL / monthlyEquivFreed);
-    if (monthsToGoal > MAX_MONTHS_TO_GOAL) continue;
+    const tiers = [];
+    for (const t of CUT_TIERS) {
+      const freedAmt = baselineAmt * t.pct; // per cycle
+      const monthlyEquivFreed = monthlyEquivBaseline * t.pct;
+      if (monthlyEquivFreed < MIN_MONTHLY_FREED) continue;
 
-    const cutPctLabel = Math.round(SUGGESTION_CUT_PCT * 100);
+      const monthsToGoal = Math.ceil(SAFETY_NET_STARTER_GOAL / monthlyEquivFreed);
+      if (monthsToGoal > MAX_MONTHS_TO_GOAL) continue;
+
+      const reducedTarget = baselineAmt * (1 - t.pct);
+      const reachable = currentAmt <= reducedTarget;
+
+      tiers.push({
+        tier: t.key,
+        label: t.label,
+        cutPct: Math.round(t.pct * 100),
+        freedAmt: Math.round(freedAmt),
+        monthsToGoal,
+        reachable
+      });
+    }
+
+    // Only worth surfacing this merchant if at least the smallest tier is
+    // still realistic this cycle — no point offering three options when
+    // even the gentlest one is already off the table.
+    if (!tiers.length || !tiers[0].reachable) continue;
+
     candidates.push({
       merchant,
       baselineAmt: Math.round(baselineAmt),
       currentAmt: Math.round(currentAmt),
-      cutPct: cutPctLabel,
-      freedAmt: Math.round(freedAmt),
-      monthsToGoal,
       cycleDays,
-      summary: `Cutting spending at ${merchant} by ${cutPctLabel}% this ${cyclePeriod} would free about ${fmtMoney(freedAmt)} — enough to build a $${SAFETY_NET_STARTER_GOAL} starter emergency fund in about ${monthsToGoal} month${monthsToGoal !== 1 ? "s" : ""}.`
+      cyclePeriod,
+      tiers
     });
   }
 
