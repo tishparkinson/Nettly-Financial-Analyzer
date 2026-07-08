@@ -224,6 +224,28 @@ export function computeGrowthStreak(history) {
 }
 
 /**
+ * A celebratory summary of Safety Net growth — total growth since starting,
+ * the most recent single contribution, and the current growth streak.
+ * Rewards the behavior directly: shows how much and how often, not just a
+ * bare streak count.
+ */
+export function safetyNetGrowthSummary(history) {
+  if (!history || history.length < 1) return { available: false };
+  const first = history[0];
+  const latest = history.at(-1);
+  const totalGrowth = latest.balance - first.balance;
+  const lastContribution = history.length >= 2 ? latest.balance - history.at(-2).balance : null;
+  const streak = computeGrowthStreak(history);
+  return {
+    available: true,
+    totalGrowth: Math.round(totalGrowth),
+    lastContribution: lastContribution != null ? Math.round(lastContribution) : null,
+    streak,
+    updatesCount: history.length
+  };
+}
+
+/**
  * Groups spend transactions by merchant for a lightweight Need/Want-only
  * review — no category picking required. Category is still assigned
  * automatically in the background by categorizeMerchant(); this only tracks
@@ -430,15 +452,38 @@ function avgNear(amounts, dates, daysBack) {
   return n ? sum / n : amounts[0] || 0;
 }
 
-export function subscriptionSummary(transactions) {
-  const subs = transactions.filter((tx) => tx.category === "Subscriptions" && tx.amount < 0);
+/**
+ * Recurring want-classified charges — a general, merchant-regularity-based
+ * replacement for category-dependent subscription detection. Uses the
+ * isRecurring/recurringInterval flags already computed at import time
+ * (regular interval + consistent amount from the same merchant), so it
+ * catches a local gym membership or storage unit exactly as well as
+ * Netflix — no lookup list of known subscription services required.
+ * Need-classified recurring charges (rent, insurance, etc.) are
+ * intentionally excluded — those are already accounted for as known
+ * necessary bills, not something to "audit."
+ */
+export function recurringWantCharges(transactions) {
+  const recurring = transactions.filter((tx) =>
+    tx.amount < 0 && tx.isRecurring && !tx.isOneTime && tx.needWant === "want" && !NON_SPEND_CATEGORIES.has(tx.category)
+  );
+
   const byMerchant = new Map();
-  for (const tx of subs) {
-    const m = tx.merchant;
-    if (!byMerchant.has(m)) byMerchant.set(m, Math.abs(tx.amount));
+  for (const tx of recurring) {
+    const m = tx.merchant || (tx.description || "").slice(0, 40);
+    if (!byMerchant.has(m)) byMerchant.set(m, { merchant: m, amounts: [], interval: tx.recurringInterval || "monthly" });
+    byMerchant.get(m).amounts.push(Math.abs(tx.amount));
   }
-  const monthly = [...byMerchant.values()].reduce((a, b) => a + b, 0);
-  return { count: byMerchant.size, monthly, merchants: [...byMerchant.keys()] };
+
+  const intervalMultiplier = { weekly: 4.33, biweekly: 2.17, monthly: 1 };
+  const items = [...byMerchant.values()].map((g) => {
+    const avgAmt = g.amounts.reduce((a, b) => a + b, 0) / g.amounts.length;
+    const monthlyEquiv = avgAmt * (intervalMultiplier[g.interval] || 1);
+    return { merchant: g.merchant, avgAmt: Math.round(avgAmt), interval: g.interval, monthlyEquiv: Math.round(monthlyEquiv) };
+  }).sort((a, b) => b.monthlyEquiv - a.monthlyEquiv);
+
+  const totalMonthly = items.reduce((s, i) => s + i.monthlyEquiv, 0);
+  return { available: items.length > 0, count: items.length, totalMonthly, items };
 }
 
 export function stabilityLabel(history) {
@@ -457,9 +502,9 @@ export function simpleInsights(transactions) {
   if (nw.wants > 0 && nw.needs > 0) {
     insights.push(`Recent spending split: ${nw.needsPct}% toward needs and ${nw.wantsPct}% toward wants.`);
   }
-  const subs = subscriptionSummary(transactions);
+  const subs = recurringWantCharges(transactions);
   if (subs.count > 0) {
-    insights.push(`Observed ${subs.count} recurring subscription-style charges (~$${subs.monthly.toFixed(0)}/mo combined).`);
+    insights.push(`Observed ${subs.count} recurring want-charge${subs.count > 1 ? "s" : ""} (~$${subs.totalMonthly.toFixed(0)}/mo combined).`);
   }
   const income = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income");
   if (income.length >= 2) {
