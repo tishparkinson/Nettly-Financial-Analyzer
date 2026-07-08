@@ -18,7 +18,8 @@ import {
   unconfirmedNeedWantSummary,
   cashGapSummary,
   completeFinancialPicture,
-  computeGrowthStreak
+  computeGrowthStreak,
+  merchantSpendRates
 } from "./analytics.js";
 import {
   analyzeSpendingPatterns,
@@ -420,8 +421,28 @@ document.getElementById("btn-wizard-none")?.addEventListener("click", () => {
   advanceWizardSlot();
 });
 
+const CUSTOM_NEED_SUGGESTIONS = [
+  "Baby Supplies", "Childcare", "Child Support", "Clothing", "Vision",
+  "Dental / Orthodontic", "Legal Fees", "Other Signed Obligation"
+];
+
+function renderWizardCustomSuggestions() {
+  const el = document.getElementById("wizard-custom-suggestions");
+  if (!el) return;
+  el.innerHTML = CUSTOM_NEED_SUGGESTIONS.map((s) =>
+    `<button type="button" class="btn btn-ghost wizard-suggestion-chip" style="width:auto;margin:0;padding:0.3rem 0.7rem;font-size:0.82rem;">${escapeHtml(s)}</button>`
+  ).join("");
+  el.querySelectorAll(".wizard-suggestion-chip").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.getElementById("wizard-custom-label").value = btn.textContent;
+      document.getElementById("wizard-custom-label").focus();
+    });
+  });
+}
+
 function renderWizardCustomStep() {
   document.getElementById("wizard-custom-label").value = "";
+  renderWizardCustomSuggestions();
   const listEl = document.getElementById("wizard-custom-merchant-list");
   const candidates = candidateMerchantsForWizard(state.transactions, currentWizardConfirmedMerchants());
   listEl.innerHTML = candidates.length
@@ -1336,6 +1357,30 @@ function renderCantMissZone(txs) {
 }
 
 function renderWhatToDo(txs) {
+  // Average spend per merchant (day/week/month) — simple, concrete, collapsed by default
+  const ratesEl = document.getElementById("merchant-spend-rates");
+  if (ratesEl) {
+    const result = merchantSpendRates(txs);
+    if (result.available && result.rates.length) {
+      ratesEl.innerHTML =
+        `<div style="display:grid;grid-template-columns:1fr auto auto auto;gap:0.4rem 0.6rem;font-size:0.8rem;">
+          <span class="small" style="font-weight:700;">Merchant</span>
+          <span class="small" style="font-weight:700;text-align:right;">/day</span>
+          <span class="small" style="font-weight:700;text-align:right;">/week</span>
+          <span class="small" style="font-weight:700;text-align:right;">/month</span>
+          ${result.rates.map((r) => `
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(r.merchant)}</span>
+            <span style="text-align:right;color:var(--muted);">${fmtMoney(r.perDay)}</span>
+            <span style="text-align:right;color:var(--muted);">${fmtMoney(r.perWeek)}</span>
+            <span style="text-align:right;color:var(--navy);font-weight:600;">${fmtMoney(r.perMonth)}</span>
+          `).join("")}
+        </div>
+        <p class="small" style="margin-top:0.5rem;">Based on ${result.spanDays} days of imported history.</p>`;
+    } else {
+      ratesEl.innerHTML = `<p class="small">${escapeHtml(result.reason || "No spending yet to break down.")}</p>`;
+    }
+  }
+
   // Safety Net Builder Suggestions — Biggest Opportunity + up to 2 more
   const suggEl = document.getElementById("safety-net-suggestions");
   if (suggEl) {
