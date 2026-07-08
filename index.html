@@ -121,7 +121,10 @@
     <section id="screen-needs-custom" class="screen">
       <h2 style="margin:0;color:var(--navy);">Any other regular needs?</h2>
       <p class="small">Things like tuition, school fees, or childcare — anything necessary that didn't fit the list above. Skip if you're done.</p>
+      <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;">💡 Not sure if something counts as a need? If you're legally or contractually obligated to pay it — a signed payment plan, a court order, a service agreement — it's a need, even if it wouldn't otherwise be. An orthodontist bill isn't usually essential, but once you've signed the payment plan, it is.</p>
       <div class="card">
+        <label>Common ones people add</label>
+        <div id="wizard-custom-suggestions" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.75rem;"></div>
         <label>What is it?</label>
         <input id="wizard-custom-label" placeholder="e.g. Tuition, School Fees, Childcare">
         <label>Which merchant(s) does it match?</label>
@@ -299,6 +302,10 @@
         <div id="impulse-spending-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="income-allocation-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="small-purchase-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <details style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);">
+          <summary style="font-size:0.85rem;font-weight:600;color:var(--navy);cursor:pointer;list-style:none;">▸ Average spend per merchant (day / week / month)</summary>
+          <div id="merchant-spend-rates" style="margin-top:0.5rem;"></div>
+        </details>
       </div>
 
       <div class="card">
