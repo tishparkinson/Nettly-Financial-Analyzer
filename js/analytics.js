@@ -182,22 +182,25 @@ export function cashGapSummary(transactions) {
  * someone can be at 100% here while still overspending on wants, and that's
  * fine; this measures whether the picture is visible, not whether it's good.
  */
-export function completeFinancialPicture(transactions) {
+export function completeFinancialPicture(transactions, confirmedMerchants = {}) {
   const spendTx = transactions.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category));
   const totalSpend = spendTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
-  const unknownSpend = spendTx.filter((tx) => tx.category === "Unknown").reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const merchantKey = (tx) => tx.merchant || (tx.description || "").slice(0, 40);
+  const unconfirmedSpend = spendTx
+    .filter((tx) => !confirmedMerchants[merchantKey(tx)])
+    .reduce((s, tx) => s + Math.abs(tx.amount), 0);
 
   const cashGap = cashGapSummary(transactions);
 
   const totalMoneyOut = totalSpend + cashGap.cashGap;
-  const knownMoneyOut = totalSpend - unknownSpend;
+  const knownMoneyOut = totalSpend - unconfirmedSpend;
 
   const pct = totalMoneyOut > 0 ? Math.round((knownMoneyOut / totalMoneyOut) * 100) : 100;
 
   return {
     pct,
     totalSpend: Math.round(totalSpend),
-    unknownSpend: Math.round(unknownSpend),
+    unconfirmedSpend: Math.round(unconfirmedSpend),
     cashWithdrawn: cashGap.cashWithdrawn,
     cashLogged: cashGap.cashLogged,
     cashGap: cashGap.cashGap,
@@ -220,25 +223,92 @@ export function computeGrowthStreak(history) {
   return streak;
 }
 
-export function uncategorizedSummary(transactions, options = {}) {
+/**
+ * Groups spend transactions by merchant for a lightweight Need/Want-only
+ * review — no category picking required. Category is still assigned
+ * automatically in the background by categorizeMerchant(); this only tracks
+ * which merchants the person has explicitly confirmed as Need or Want.
+ * Excludes merchants already confirmed (tracked in confirmedMerchants, a
+ * merchant -> "need"|"want" map).
+ */
+/**
+ * Merchant candidates for the guided Needs wizard: every spend merchant not
+ * yet confirmed, with a simple recurring flag (appears in 2+ distinct
+ * calendar months present in the data) so monthly bills like rent and
+ * utilities naturally sort to the top — exactly the ones people need to
+ * find fastest when working through Housing, Utilities, etc.
+ */
+export function candidateMerchantsForWizard(transactions, confirmedMerchants = {}) {
+  const merchantKey = (tx) => tx.merchant || (tx.description || "").slice(0, 40);
+  const groups = new Map();
+
+  for (const tx of transactions) {
+    if (tx.amount >= 0) continue;
+    if (NON_SPEND_CATEGORIES.has(tx.category)) continue;
+    const m = merchantKey(tx);
+    if (confirmedMerchants[m]) continue;
+    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, total: 0, months: new Set() });
+    const g = groups.get(m);
+    g.count++;
+    g.total += Math.abs(tx.amount);
+    g.months.add(tx.date.slice(0, 7));
+  }
+
+  return [...groups.values()]
+    .map((g) => ({
+      merchant: g.merchant,
+      count: g.count,
+      total: Math.round(g.total),
+      isRecurring: g.months.size >= 2
+    }))
+    .sort((a, b) => {
+      if (a.isRecurring !== b.isRecurring) return a.isRecurring ? -1 : 1;
+      return b.total - a.total;
+    });
+}
+
+export function merchantsNeedingNeedWantReview(transactions, confirmedMerchants = {}) {
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+  const groups = new Map();
+  for (const tx of transactions) {
+    if (tx.amount >= 0) continue;
+    if (NON_SPEND_CATEGORIES.has(tx.category)) continue;
+    const m = tx.merchant || (tx.description || "").slice(0, 40);
+    if (confirmedMerchants[m]) continue;
+    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, total: 0, thisMonthTotal: 0 });
+    const g = groups.get(m);
+    g.count++;
+    g.total += Math.abs(tx.amount);
+    if (new Date(tx.date) >= monthStart) g.thisMonthTotal += Math.abs(tx.amount);
+  }
+
+  return [...groups.values()]
+    .map((g) => ({ ...g, total: Math.round(g.total), thisMonthTotal: Math.round(g.thisMonthTotal) }))
+    .sort((a, b) => b.count - a.count);
+}
+
+export function unconfirmedNeedWantSummary(transactions, confirmedMerchants = {}, options = {}) {
   const pctThreshold = options.pctThreshold ?? 3;
   const merchantCountThreshold = options.merchantCountThreshold ?? 5;
 
-  const spendTx = transactions.filter((tx) => tx.amount < 0);
+  const spendTx = transactions.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category));
   const totalSpend = spendTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
 
-  const unknownTx = spendTx.filter((tx) => tx.category === "Unknown");
-  const unknownSpend = unknownTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
-  const unknownMerchants = new Set(unknownTx.map((tx) => tx.merchant || tx.description));
+  const merchantKey = (tx) => tx.merchant || (tx.description || "").slice(0, 40);
+  const unconfirmedTx = spendTx.filter((tx) => !confirmedMerchants[merchantKey(tx)]);
+  const unconfirmedSpend = unconfirmedTx.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const unconfirmedMerchants = new Set(unconfirmedTx.map(merchantKey));
 
-  const pctOfSpend = totalSpend > 0 ? (unknownSpend / totalSpend) * 100 : 0;
+  const pctOfSpend = totalSpend > 0 ? (unconfirmedSpend / totalSpend) * 100 : 0;
 
   return {
-    unknownTxCount: unknownTx.length,
-    unknownMerchantCount: unknownMerchants.size,
-    unknownSpend: Math.round(unknownSpend),
+    unconfirmedTxCount: unconfirmedTx.length,
+    unconfirmedMerchantCount: unconfirmedMerchants.size,
+    unconfirmedSpend: Math.round(unconfirmedSpend),
     pctOfSpend: Math.round(pctOfSpend * 10) / 10,
-    shouldHighlight: unknownTx.length > 0 && (pctOfSpend >= pctThreshold || unknownMerchants.size >= merchantCountThreshold)
+    shouldHighlight: unconfirmedTx.length > 0 && (pctOfSpend >= pctThreshold || unconfirmedMerchants.size >= merchantCountThreshold)
   };
 }
 
