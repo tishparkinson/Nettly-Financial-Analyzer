@@ -229,37 +229,8 @@ export function categorizeMerchant(description, merchantMemory = {}) {
   return { category: "Unknown", confidence: 0.4, merchant: key };
 }
 
-// Common merchant brands, matched as a substring anywhere in the raw
-// description — this catches the real brand name regardless of surrounding
-// transaction codes, store numbers, or city/state text, so "DBT CRD 0930
-// SHELL OIL..." and "1551 00060403 SHELL SERVICE STATION..." both
-// consolidate to the same merchant instead of staying separate.
-const KNOWN_MERCHANT_BRANDS = [
-  "WAL-MART", "WALMART", "TARGET", "STARBUCKS", "MCDONALD", "SHELL", "CHEVRON", "COSTCO",
-  "KROGER", "SAFEWAY", "TRADER JOE", "WHOLE FOODS", "ALDI", "PUBLIX", "AMAZON", "HOME DEPOT",
-  "LOWE'S", "LOWES", "CVS", "WALGREENS", "DUNKIN", "SUBWAY", "CHIPOTLE", "TACO BELL",
-  "BURGER KING", "WENDY", "DOORDASH", "UBER EATS", "UBER", "LYFT", "NETFLIX", "SPOTIFY",
-  "HULU", "DISNEY", "APPLE.COM", "COSTA VIDA", "DAIRY QUEEN", "ULTA", "GNC",
-  "BEST BUY", "AUTOZONE", "O'REILLY", "JIFFY LUBE", "PHILLIPS 66", "EXXON", "MOBIL",
-  "MAVERIK", "7-ELEVEN", "CIRCLE K", "FAMILY DOLLAR", "DOLLAR TREE", "DOLLAR GENERAL",
-  "DUTCH BROS", "PANDA EXPRESS", "OLIVE GARDEN", "APPLEBEE", "IHOP", "DENNY'S", "PIZZA HUT",
-  "DOMINO", "PAPA JOHN", "KFC", "POPEYES", "RAISING CANE", "JAMBA JUICE", "COLD STONE",
-  "TROPICAL SMOOTHIE", "GREAT CLIPS", "SPORT CLIPS", "PLANET FITNESS", "GOODWILL",
-  "FIREHOUSE SUBS", "BROULIM", "PRETZELMAKER", "FIXXOLOGY"
-];
-
-function extractKnownBrand(text) {
-  const upper = text.toUpperCase();
-  for (const brand of KNOWN_MERCHANT_BRANDS) {
-    if (upper.includes(brand)) return brand;
-  }
-  return null;
-}
-
 export function normalizeMerchant(description) {
   const raw = description || "";
-  const known = extractKnownBrand(raw);
-  if (known) return known;
 
   const cleaned = raw
     .replace(/^(DBT CRD|PMT CRD|IBT DEB|DDA B\/P|DDA REGULAR|ATM W\/D|REMOTE|CREDIT)\s*/i, "")
@@ -267,10 +238,62 @@ export function normalizeMerchant(description) {
     .replace(/\$[\d,]+\.?\d*/g, "")              // dollar amounts
     .replace(/\bC(ARD)?#\s*\d+/gi, " ")          // "C# 6131" / "CARD# 6131"
     .replace(/#\s*\d+/g, " ")                    // store numbers like "#1878"
-    .replace(/\b\d{4,}\b/g, " ")                 // long reference/transaction codes
-    .replace(/\b[A-Z]{2}\b$/, "")                // trailing state abbreviation
+    .replace(/\d{4,}/g, " ")                     // long reference/transaction codes — no word
+                                                   // boundary required, so this also strips digits
+                                                   // glued directly onto letters (e.g. "OIL10005373013")
+    .replace(/\b[A-Z]{2}\b\s*$/i, "")             // trailing state abbreviation
     .replace(/\s+/g, " ")
     .trim();
 
   return (cleaned.slice(0, 40).toUpperCase()) || "UNKNOWN";
+}
+
+const MERCHANT_STOPWORDS = new Set(["THE", "STORE", "INC", "LLC", "CO", "LOC", "STATION", "SERVICE", "SHOP", "OIL"]);
+
+function significantFirstWord(name) {
+  const words = name.split(" ").filter(Boolean);
+  for (const w of words) {
+    if (!MERCHANT_STOPWORDS.has(w) && w.length >= 3) return w;
+  }
+  return words[0] || name;
+}
+
+/**
+ * Consolidates merchant name variants that clearly refer to the same real
+ * business but produced different normalized strings — e.g. "SHELL OIL" and
+ * "SHELL SERVICE STATION" both share "SHELL" as their first significant
+ * word, even though neither is a prefix of the other. Data-driven: works
+ * from whatever merchants actually appear in the imported transactions, no
+ * prebuilt brand list required, so it adapts to any user's actual bank data
+ * instead of only recognizing a curated set of national chains.
+ *
+ * Groups by exact significant-first-WORD match (not character-level
+ * substring), which is what actually protects against false merges — e.g.
+ * "TARGET" and "TARGETED MARKETING SOLUTIONS" split into "TARGET" and
+ * "TARGETED" as first words and never group together, no extra check
+ * needed. The remaining risk (two unrelated businesses that happen to share
+ * a first brand-word, e.g. a franchise sub-brand) is rare and easy to
+ * correct by hand if it ever happens — a smaller cost than leaving
+ * obviously-the-same merchant split apart by default.
+ */
+export function consolidateMerchantNames(transactions) {
+  const groups = new Map(); // significant first word -> Set of distinct merchant strings seen
+  for (const tx of transactions) {
+    const m = tx.merchant;
+    if (!m || m === "UNKNOWN") continue;
+    const key = significantFirstWord(m);
+    if (!groups.has(key)) groups.set(key, new Set());
+    groups.get(key).add(m);
+  }
+
+  const remap = new Map(); // variant -> canonical (shortest in its group)
+  for (const variants of groups.values()) {
+    if (variants.size < 2) continue;
+    const sorted = [...variants].sort((a, b) => a.length - b.length);
+    const canonical = sorted[0];
+    for (const v of sorted) if (v !== canonical) remap.set(v, canonical);
+  }
+
+  if (!remap.size) return transactions;
+  return transactions.map((tx) => (remap.has(tx.merchant) ? { ...tx, merchant: remap.get(tx.merchant) } : tx));
 }
