@@ -3,6 +3,7 @@ export const CATEGORIES = [
   "Interest Income",
   "One-Time Income",
   "Housing",
+  "Rent/Mortgage + Utilities Bundle",
   "Utilities",
   "Insurance",
   "Phone",
@@ -45,6 +46,7 @@ export const CATEGORIES = [
 /** Default Needs classification for Months Covered (needs only). */
 export const NEEDS_CATEGORIES = new Set([
   "Housing",
+  "Rent/Mortgage + Utilities Bundle",
   "Utilities",
   "Insurance",
   "Phone",
@@ -167,12 +169,13 @@ export const MERCHANT_RULES = [
 export const BUDGET_GUIDELINES = {
   "Overall Wants": { aim: 30, note: "A common rule of thumb (the \"50/30/20\" guideline) targets about 30% of take-home for wants overall." },
   "Housing": { aim: 30, note: "Aim to keep housing under 30% of take-home." },
+  "Rent/Mortgage + Utilities Bundle": { aim: 35, note: "Roughly Housing + Utilities combined — aim for under 35% of take-home when your rent or mortgage includes some or all utilities." },
   "Transportation": { aim: 15, note: "Most budgets target transportation under 15% of take-home." },
   "Groceries": { aim: 12, note: "A common grocery target is under 12% of take-home." },
   "Dining Out": { aim: 8, note: "Dining out tends to add up — many households aim for under 8%." },
   "Fast Food": { aim: 5, note: "Fast food under 5% of take-home keeps it manageable." },
   "Coffee & Convenience": { aim: 4, note: "Coffee and convenience stops can sneak up — under 4% is a common target." },
-  "Utilities": { aim: 8, note: "Utilities typically run 5–8% of take-home." },
+  "Utilities": { aim: 8, note: "Utilities typically run 5–8% of take-home — covers electric, gas, water, sewer, trash, or any combined city utility bill, in any mix." },
   "Insurance": { aim: 20, note: "Insurance (all types) often lands between 10–20% of take-home." },
   "Healthcare": { aim: 8, note: "Healthcare costs vary widely — many budgets target under 8%." },
   "Subscriptions": { aim: 5, note: "Subscriptions are easy to accumulate — under 5% is a reasonable cap." },
@@ -226,12 +229,48 @@ export function categorizeMerchant(description, merchantMemory = {}) {
   return { category: "Unknown", confidence: 0.4, merchant: key };
 }
 
+// Common merchant brands, matched as a substring anywhere in the raw
+// description — this catches the real brand name regardless of surrounding
+// transaction codes, store numbers, or city/state text, so "DBT CRD 0930
+// SHELL OIL..." and "1551 00060403 SHELL SERVICE STATION..." both
+// consolidate to the same merchant instead of staying separate.
+const KNOWN_MERCHANT_BRANDS = [
+  "WAL-MART", "WALMART", "TARGET", "STARBUCKS", "MCDONALD", "SHELL", "CHEVRON", "COSTCO",
+  "KROGER", "SAFEWAY", "TRADER JOE", "WHOLE FOODS", "ALDI", "PUBLIX", "AMAZON", "HOME DEPOT",
+  "LOWE'S", "LOWES", "CVS", "WALGREENS", "DUNKIN", "SUBWAY", "CHIPOTLE", "TACO BELL",
+  "BURGER KING", "WENDY", "DOORDASH", "UBER EATS", "UBER", "LYFT", "NETFLIX", "SPOTIFY",
+  "HULU", "DISNEY", "APPLE.COM", "COSTA VIDA", "DAIRY QUEEN", "ULTA", "GNC",
+  "BEST BUY", "AUTOZONE", "O'REILLY", "JIFFY LUBE", "PHILLIPS 66", "EXXON", "MOBIL",
+  "MAVERIK", "7-ELEVEN", "CIRCLE K", "FAMILY DOLLAR", "DOLLAR TREE", "DOLLAR GENERAL",
+  "DUTCH BROS", "PANDA EXPRESS", "OLIVE GARDEN", "APPLEBEE", "IHOP", "DENNY'S", "PIZZA HUT",
+  "DOMINO", "PAPA JOHN", "KFC", "POPEYES", "RAISING CANE", "JAMBA JUICE", "COLD STONE",
+  "TROPICAL SMOOTHIE", "GREAT CLIPS", "SPORT CLIPS", "PLANET FITNESS", "GOODWILL",
+  "FIREHOUSE SUBS", "BROULIM", "PRETZELMAKER", "FIXXOLOGY"
+];
+
+function extractKnownBrand(text) {
+  const upper = text.toUpperCase();
+  for (const brand of KNOWN_MERCHANT_BRANDS) {
+    if (upper.includes(brand)) return brand;
+  }
+  return null;
+}
+
 export function normalizeMerchant(description) {
-  return (description || "")
-    .replace(/\d{2}\/\d{2}(\/\d{2,4})?/g, "")
-    .replace(/\$[\d,]+\.?\d*/g, "")
+  const raw = description || "";
+  const known = extractKnownBrand(raw);
+  if (known) return known;
+
+  const cleaned = raw
+    .replace(/^(DBT CRD|PMT CRD|IBT DEB|DDA B\/P|DDA REGULAR|ATM W\/D|REMOTE|CREDIT)\s*/i, "")
+    .replace(/\d{2}\/\d{2}(\/\d{2,4})?/g, "")   // dates
+    .replace(/\$[\d,]+\.?\d*/g, "")              // dollar amounts
+    .replace(/\bC(ARD)?#\s*\d+/gi, " ")          // "C# 6131" / "CARD# 6131"
+    .replace(/#\s*\d+/g, " ")                    // store numbers like "#1878"
+    .replace(/\b\d{4,}\b/g, " ")                 // long reference/transaction codes
+    .replace(/\b[A-Z]{2}\b$/, "")                // trailing state abbreviation
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 48)
-    .toUpperCase() || "UNKNOWN";
+    .trim();
+
+  return (cleaned.slice(0, 40).toUpperCase()) || "UNKNOWN";
 }
