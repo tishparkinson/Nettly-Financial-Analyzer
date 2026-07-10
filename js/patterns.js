@@ -789,6 +789,70 @@ export function billsThisCycle(transactions) {
 }
 
 /**
+ * When Safe Spending Until Payday shows a real shortfall, this looks for
+ * concrete ways to close it: recurring want-charges (subscriptions, etc.)
+ * expected to hit before payday that could be skipped/cancelled, plus a
+ * rough estimate of typical day-to-day discretionary spend for the
+ * remaining days. If both together still don't close the gap, that's
+ * flagged honestly too — the tool doesn't invent a way to close a real
+ * hole, it just shows what's actually there.
+ */
+export function shortfallCutSuggestions(transactions, shortfallAmount, daysUntilPayday) {
+  const now = new Date();
+  const payday = new Date(now); payday.setDate(payday.getDate() + daysUntilPayday);
+
+  const byMerchant = new Map();
+  for (const tx of transactions) {
+    if (tx.amount >= 0 || tx.needWant !== "want" || NON_SPEND_CATEGORIES.has(tx.category)) continue;
+    const m = tx.merchant || tx.description;
+    if (!byMerchant.has(m)) byMerchant.set(m, []);
+    byMerchant.get(m).push(tx);
+  }
+  const recurringWants = [];
+  for (const [merchant, txs] of byMerchant) {
+    if (txs.length < 2) continue;
+    const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    const gaps = [];
+    for (let i = 1; i < sorted.length; i++) gaps.push(daysBetween(sorted[i].date, sorted[i - 1].date));
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    if (avgGap < 5) continue; // frequent small habits are covered by the discretionary estimate below, not listed individually
+    const gapStdev = Math.sqrt(gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length);
+    if (gapStdev / avgGap > 0.5) continue;
+
+    const last = sorted.at(-1);
+    let expectedNext = new Date(last.date);
+    for (let i = 0; i < 10; i++) {
+      if (expectedNext >= now) break;
+      expectedNext = new Date(expectedNext); expectedNext.setDate(expectedNext.getDate() + Math.round(avgGap));
+    }
+    if (expectedNext >= now && expectedNext <= payday) {
+      recurringWants.push({ merchant, amount: Math.round(Math.abs(last.amount)), expectedDate: expectedNext.toISOString().slice(0, 10) });
+    }
+  }
+  recurringWants.sort((a, b) => b.amount - a.amount);
+  const recurringWantsTotal = recurringWants.reduce((s, w) => s + w.amount, 0);
+
+  const lookback = new Date(now); lookback.setDate(lookback.getDate() - 30);
+  const recentWantSpend = transactions
+    .filter((tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category) && new Date(tx.date) >= lookback && new Date(tx.date) <= now)
+    .reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const dailyWantRate = recentWantSpend / 30;
+  const typicalRemainingWantSpend = Math.round(dailyWantRate * daysUntilPayday);
+
+  const totalPotentialRelief = recurringWantsTotal + typicalRemainingWantSpend;
+  const closesGap = totalPotentialRelief >= shortfallAmount;
+
+  return {
+    recurringWants,
+    recurringWantsTotal,
+    typicalRemainingWantSpend,
+    totalPotentialRelief,
+    closesGap,
+    remainingGapAfterCuts: Math.max(Math.round(shortfallAmount - totalPotentialRelief), 0)
+  };
+}
+
+/**
  * A RANGE, not a single precise number — deliberately. Forecasting exact
  * upcoming bills is inherently uncertain, and a false-precision number that
  * turns out wrong is worse than an honest range. Conservative end assumes
@@ -818,6 +882,7 @@ export function safeSpendingUntilPayday(transactions) {
 
   const conservative = incomeSoFar - spentSoFar - expectedBillsHigh;
   const comfortable = incomeSoFar - spentSoFar - expectedBillsLow;
+  const isShortfall = conservative < 0;
 
   return {
     available: true,
@@ -826,8 +891,13 @@ export function safeSpendingUntilPayday(transactions) {
     incomeSoFar: Math.round(incomeSoFar),
     spentSoFar: Math.round(spentSoFar),
     expectedBillsTotal: Math.round(expectedBillsTotal),
-    rangeLow: Math.round(Math.max(conservative, 0)),
-    rangeHigh: Math.round(Math.max(comfortable, conservative, 0)),
+    isShortfall,
+    // Never floored at zero — a real shortfall shows as a real negative
+    // number. Hiding it as "$0 safe to spend" would look like "no room for
+    // wants" instead of the true "this won't cover needs," which is exactly
+    // the wrong message for someone with no margin to work with.
+    rangeLow: Math.round(conservative),
+    rangeHigh: Math.round(Math.max(comfortable, conservative)),
     bills
   };
 }
