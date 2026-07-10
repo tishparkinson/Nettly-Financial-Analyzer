@@ -39,7 +39,8 @@ import {
   merchantVelocity,
   detectPayCycle,
   buildPaycheckTimeline,
-  safetyNetReservationSuggestions
+  safetyNetReservationSuggestions,
+  shortfallCutSuggestions
 } from "./patterns.js";
 import {
   loadState,
@@ -1703,6 +1704,7 @@ function renderSafeSpendingBox(months) {
   const safe = safeSpendingUntilPayday(state.transactions);
   if (!safe.available) {
     rangeEl.textContent = "—";
+    rangeEl.style.color = "var(--navy)";
     daysEl.textContent = "";
     detailEl.textContent = safe.reason || "";
     billsEl.innerHTML = "";
@@ -1710,41 +1712,66 @@ function renderSafeSpendingBox(months) {
     return;
   }
 
-  const reservation = safetyNetReservationSuggestions(state.transactions, months);
   let rangeLow = safe.rangeLow, rangeHigh = safe.rangeHigh;
   let reserveHtml = "";
 
-  if (reservation.applicable) {
-    const chosen = reservation.tiers.find((t) => t.key === selectedReservationTier) || reservation.defaultTier;
-    if (reservation.isUrgent) {
-      // Baked in like a Need — the displayed ceiling already has this set
-      // aside, so what's shown is genuinely safe once wants are done.
-      rangeLow = Math.max(rangeLow - chosen.amount, 0);
-      rangeHigh = Math.max(rangeHigh - chosen.amount, 0);
-      reserveHtml = `
-        <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
-          <p class="small" style="font-weight:600;color:var(--navy);">Already sets aside ${fmtMoney(chosen.amount)} this ${reservation.cyclePeriod} for the Safety Net (under 3 months covered right now, so this is treated like a Need) — pick a different pace:</p>
-          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
-            ${reservation.tiers.map((t) => `<button type="button" class="btn ${t.key === chosen.key ? "btn-primary" : "btn-ghost"} reserve-tier-btn" data-tier="${t.key}" style="flex:1;min-width:100px;margin:0;padding:0.4rem;font-size:0.78rem;">${t.label}<br><span style="font-weight:400;font-size:0.72rem;">${fmtMoney(t.amount)} · "${t.tagline}"</span></button>`).join("")}
-          </div>
-        </div>`;
-    } else {
-      reserveHtml = `
-        <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
-          <p class="small" style="font-weight:600;color:var(--navy);">Past 3 months covered — still encouraged, not required. Options for this ${reservation.cyclePeriod}:</p>
-          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
-            ${reservation.tiers.map((t) => `<div class="small" style="flex:1;min-width:100px;text-align:center;padding:0.4rem;border:1px solid var(--border);border-radius:8px;"><strong>${t.label}</strong><br>${fmtMoney(t.amount)}<br><span style="font-size:0.72rem;">"${t.tagline}"</span></div>`).join("")}
-          </div>
-        </div>`;
+  if (safe.isShortfall) {
+    // A real gap — never floored to look like "$0 room," and no Safety Net
+    // reservation suggestion here. Suggesting someone save money while they
+    // can't cover their own needs would be tone-deaf; the priority is
+    // showing exactly how big the gap is and what could realistically
+    // close it.
+    rangeEl.style.color = "#b42318";
+    const cuts = shortfallCutSuggestions(state.transactions, Math.abs(rangeLow), safe.daysUntilPayday);
+    const cutRows = cuts.recurringWants.length
+      ? cuts.recurringWants.map((w) => `<div style="display:flex;justify-content:space-between;padding:0.15rem 0;"><span>${escapeHtml(w.merchant)}</span><span>${fmtMoney(w.amount)} · ~${escapeHtml(w.expectedDate)}</span></div>`).join("")
+      : `<p class="small">No recurring subscriptions or want-charges expected before payday to point at specifically.</p>`;
+
+    reserveHtml = `
+      <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid #f5c6c6;">
+        <p class="small" style="font-weight:600;color:#b42318;">This won't cover needs before payday as things stand — here's what might help close it:</p>
+        ${cuts.recurringWants.length ? `<p class="small" style="margin-top:0.3rem;"><strong>Recurring want-charges due before payday</strong> (${fmtMoney(cuts.recurringWantsTotal)} total):</p>${cutRows}` : cutRows}
+        <p class="small" style="margin-top:0.3rem;">Typical day-to-day wants spending for the remaining ${safe.daysUntilPayday} day${safe.daysUntilPayday !== 1 ? "s" : ""}, if skipped entirely: about ${fmtMoney(cuts.typicalRemainingWantSpend)}.</p>
+        ${cuts.closesGap
+          ? `<p class="small" style="margin-top:0.3rem;color:var(--teal);font-weight:600;">Cutting all of the above would close the gap.</p>`
+          : `<p class="small" style="margin-top:0.3rem;">Even cutting all of the above leaves about ${fmtMoney(cuts.remainingGapAfterCuts)} still short — at that point, bringing in some extra income before payday may be the more realistic path, alongside cutting what's possible.</p>`}
+      </div>`;
+  } else {
+    const reservation = safetyNetReservationSuggestions(state.transactions, months);
+    if (reservation.applicable) {
+      const chosen = reservation.tiers.find((t) => t.key === selectedReservationTier) || reservation.defaultTier;
+      if (reservation.isUrgent) {
+        rangeLow = rangeLow - chosen.amount;
+        rangeHigh = rangeHigh - chosen.amount;
+        const tierPushesShortfall = rangeLow < 0;
+        reserveHtml = `
+          <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+            <p class="small" style="font-weight:600;color:var(--navy);">Already sets aside ${fmtMoney(chosen.amount)} this ${reservation.cyclePeriod} for the Safety Net (under 3 months covered right now, so this is treated like a Need) — pick a different pace:</p>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
+              ${reservation.tiers.map((t) => `<button type="button" class="btn ${t.key === chosen.key ? "btn-primary" : "btn-ghost"} reserve-tier-btn" data-tier="${t.key}" style="flex:1;min-width:100px;margin:0;padding:0.4rem;font-size:0.78rem;">${t.label}<br><span style="font-weight:400;font-size:0.72rem;">${fmtMoney(t.amount)} · "${t.tagline}"</span></button>`).join("")}
+            </div>
+            ${tierPushesShortfall ? `<p class="small" style="margin-top:0.4rem;color:#b42318;">This pace would leave you short before payday — a smaller pace may fit better right now.</p>` : ""}
+          </div>`;
+      } else {
+        reserveHtml = `
+          <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+            <p class="small" style="font-weight:600;color:var(--navy);">Past 3 months covered — still encouraged, not required. Options for this ${reservation.cyclePeriod}:</p>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
+              ${reservation.tiers.map((t) => `<div class="small" style="flex:1;min-width:100px;text-align:center;padding:0.4rem;border:1px solid var(--border);border-radius:8px;"><strong>${t.label}</strong><br>${fmtMoney(t.amount)}<br><span style="font-size:0.72rem;">"${t.tagline}"</span></div>`).join("")}
+            </div>
+          </div>`;
+      }
+    } else if (months >= 6) {
+      reserveHtml = `<p class="small" style="margin-top:0.5rem;color:var(--teal);">🎉 Six months covered — Safety Net goal reached. Anything added from here is a bonus.</p>`;
     }
-  } else if (months >= 6) {
-    // Goal reached (6+ months) — no push, just a quiet acknowledgment.
-    reserveHtml = `<p class="small" style="margin-top:0.5rem;color:var(--teal);">🎉 Six months covered — Safety Net goal reached. Anything added from here is a bonus.</p>`;
+    rangeEl.style.color = rangeLow < 0 ? "#b42318" : "var(--navy)";
   }
 
   rangeEl.textContent = `${fmtMoney(rangeLow)} – ${fmtMoney(rangeHigh)}`;
   daysEl.textContent = `${safe.daysUntilPayday} day${safe.daysUntilPayday !== 1 ? "s" : ""} until payday`;
-  detailEl.textContent = `A ceiling, not a target — spending less than this and moving the rest to the Safety Net is the better outcome, not just an option. Based on past charges only — a rate increase, a new charge, or a weather-driven utility spike won't show up here until it's happened at least once. Bills that have varied historically get a wider range below; steady ones get a tighter one.`;
+  detailEl.textContent = safe.isShortfall
+    ? `Based on past charges only — bills that vary could still come in lighter or heavier than this. Real numbers, not softened.`
+    : `A ceiling, not a target — spending less than this and moving the rest to the Safety Net is the better outcome, not just an option. Based on past charges only — a rate increase, a new charge, or a weather-driven utility spike won't show up here until it's happened at least once. Bills that have varied historically get a wider range below; steady ones get a tighter one.`;
 
   if (reserveEl) {
     reserveEl.innerHTML = reserveHtml;
