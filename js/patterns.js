@@ -99,7 +99,7 @@ export function dayOfWeekProfile(transactions, windowDays) {
  * callers should fall back to a fixed default window in that case rather
  * than forcing a cycle onto irregular income.
  */
-function detectPayCycle(transactions, windowDays) {
+export function detectPayCycle(transactions, windowDays) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
 
@@ -118,6 +118,14 @@ function detectPayCycle(transactions, windowDays) {
   const gapStdev = Math.sqrt(gapVariance);
 
   if (avgGap === 0 || gapStdev / avgGap > 0.4) return null;
+
+  // A cycle this short doesn't leave enough transactions in a single window
+  // for pace comparisons to mean much — and can also be an artifact of two
+  // household earners on staggered schedules producing a deceptively
+  // regular-looking combined gap pattern (tested: neither gap-timing nor
+  // paycheck-amount consistency reliably tells these two cases apart, so
+  // this floor is a pragmatic safety net, not a precise detector).
+  if (avgGap < 6) return null;
 
   return { avgGapDays: avgGap, paydays: incomeTx.map((tx) => tx.date) };
 }
@@ -447,6 +455,98 @@ export function safeSpendingUntilPayday(transactions) {
  * Overall wants spending as a % of income, using the Careful/Standard/
  * Generous tiers. This is the always-visible headline badge.
  */
+/**
+ * Needs as a % of income — purely informational, no guideline/tier judgment
+ * attached, since there's no "cut this" advice to give about needs the way
+ * there is for wants. Still valuable to see plainly: if needs alone eat
+ * most of income, that's important context no amount of trimming wants can
+ * fully solve.
+ */
+export function overallNeedsShare(transactions, windowDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+
+  const needs = transactions.filter((tx) =>
+    tx.amount < 0 && tx.needWant === "need" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category) && inWindow(tx, cutoff)
+  );
+  const needsTotal = needs.reduce((s, tx) => s + Math.abs(tx.amount), 0);
+  const monthlyIncome = estimateMonthlyIncome(transactions, windowDays);
+
+  if (!monthlyIncome) {
+    return { available: false, reason: "Add income transactions to see needs as a share of income." };
+  }
+
+  const spanMonths = Math.max(Math.min(windowDays, daysBetween(new Date(), cutoff)) / 30, 0.1);
+  const monthlyNeeds = needsTotal / spanMonths;
+  const pctOfIncome = Math.round((monthlyNeeds / monthlyIncome) * 100);
+
+  return { available: true, monthlyNeeds: Math.round(monthlyNeeds), pctOfIncome, remainingPct: Math.max(100 - pctOfIncome, 0) };
+}
+
+// Keyword patterns for fee-type charges — matched directly against the
+// transaction description, not category, so this works regardless of
+// whether a merchant rule happens to recognize the specific bank's wording.
+const FEE_PATTERNS = {
+  "ATM Fee": /atm (fee|w\/d)/i,
+  "Overdraft Fee": /overdraft|nsf fee|insufficient funds/i,
+  "Late Fee": /late fee|late payment/i,
+  "Interest Charged": /interest (charge|charged)|finance charge/i
+};
+
+/**
+ * Totals up fee-type charges (ATM, overdraft, late, interest) by matching
+ * description keywords directly — no category dependency, works the same
+ * regardless of how any given bank labels these.
+ */
+export function feesSummary(transactions, windowDays = 90) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+
+  const byType = {};
+  let total = 0;
+  for (const tx of transactions) {
+    if (tx.amount >= 0) continue;
+    if (!inWindow(tx, cutoff)) continue;
+    for (const [label, re] of Object.entries(FEE_PATTERNS)) {
+      if (re.test(tx.description || "")) {
+        const amt = Math.abs(tx.amount);
+        byType[label] = (byType[label] || 0) + amt;
+        total += amt;
+        break; // don't double-count a single charge against multiple fee types
+      }
+    }
+  }
+
+  const items = Object.entries(byType).map(([label, amt]) => ({ label, amount: Math.round(amt) })).sort((a, b) => b.amount - a.amount);
+  return { available: items.length > 0, total: Math.round(total), items, windowDays };
+}
+
+/**
+ * Average days between purchases at each merchant — "Merchant Velocity."
+ * Needs 3+ purchases from a merchant to compute a meaningful average gap.
+ */
+export function merchantVelocity(transactions, topN = 10) {
+  const spend = transactions.filter(isSpendTx).sort((a, b) => a.date.localeCompare(b.date));
+  const byMerchant = new Map();
+  for (const tx of spend) {
+    const m = tx.merchant || (tx.description || "").slice(0, 40);
+    if (!byMerchant.has(m)) byMerchant.set(m, []);
+    byMerchant.get(m).push(tx.date);
+  }
+
+  const results = [];
+  for (const [merchant, dates] of byMerchant) {
+    if (dates.length < 3) continue;
+    const gaps = [];
+    for (let i = 1; i < dates.length; i++) gaps.push(daysBetween(dates[i], dates[i - 1]));
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    results.push({ merchant, avgDays: Math.round(avgGap * 10) / 10, count: dates.length });
+  }
+
+  results.sort((a, b) => a.avgDays - b.avgDays); // most frequent first
+  return { available: results.length > 0, items: results.slice(0, topN) };
+}
+
 export function overallWantsTier(transactions, windowDays = 30) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
