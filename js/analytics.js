@@ -155,11 +155,15 @@ export function averageTotalSpending(transactions, days = 45) {
  * account type — covers both the manual entry form and a pasted Cash
  * account). The gap is money that left the bank with no visible destination.
  */
-export function cashGapSummary(transactions) {
-  const withdrawals = transactions.filter((tx) => tx.category === "ATM Withdrawal / Cash" && tx.amount < 0);
+export function cashGapSummary(transactions, windowDays = 30) {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - windowDays);
+  const inWindow = (tx) => new Date(tx.date) >= cutoff;
+
+  const withdrawals = transactions.filter((tx) => tx.category === "ATM Withdrawal / Cash" && tx.amount < 0 && inWindow(tx));
   const cashWithdrawn = withdrawals.reduce((s, tx) => s + Math.abs(tx.amount), 0);
 
-  const logged = transactions.filter((tx) => tx.accountType === "Cash" && tx.amount < 0);
+  const logged = transactions.filter((tx) => tx.accountType === "Cash" && tx.amount < 0 && inWindow(tx));
   const cashLogged = logged.reduce((s, tx) => s + Math.abs(tx.amount), 0);
 
   const cashGap = Math.max(cashWithdrawn - cashLogged, 0);
@@ -170,7 +174,8 @@ export function cashGapSummary(transactions) {
     cashLogged: Math.round(cashLogged),
     cashGap: Math.round(cashGap),
     gapPct,
-    hasWithdrawals: cashWithdrawn > 0
+    hasWithdrawals: cashWithdrawn > 0,
+    windowDays
   };
 }
 
@@ -269,10 +274,12 @@ export function candidateMerchantsForWizard(transactions, confirmedMerchants = {
     if (NON_SPEND_CATEGORIES.has(tx.category)) continue;
     const m = merchantKey(tx);
     if (confirmedMerchants[m]) continue;
-    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, total: 0, months: new Set() });
+    if (!groups.has(m)) groups.set(m, { merchant: m, count: 0, total: 0, maxAmount: 0, months: new Set() });
     const g = groups.get(m);
+    const amt = Math.abs(tx.amount);
     g.count++;
-    g.total += Math.abs(tx.amount);
+    g.total += amt;
+    if (amt > g.maxAmount) g.maxAmount = amt;
     g.months.add(tx.date.slice(0, 7));
   }
 
@@ -281,11 +288,12 @@ export function candidateMerchantsForWizard(transactions, confirmedMerchants = {
       merchant: g.merchant,
       count: g.count,
       total: Math.round(g.total),
+      maxAmount: Math.round(g.maxAmount),
       isRecurring: g.months.size >= 2
     }))
     .sort((a, b) => {
       if (a.isRecurring !== b.isRecurring) return a.isRecurring ? -1 : 1;
-      return b.total - a.total;
+      return b.maxAmount - a.maxAmount;
     });
 }
 
