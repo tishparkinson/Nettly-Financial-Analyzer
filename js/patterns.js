@@ -329,13 +329,26 @@ function predictBillsInWindow(transactions, startDate, endDate) {
     if (gapStdev / avgGap > 0.5) continue;
 
     const last = sorted.at(-1);
+    // A bill that's gone quiet for well beyond its own typical interval is
+    // probably no longer active — moved, switched providers, paid off,
+    // canceled, whatever the reason. This is proportional to the bill's own
+    // rhythm (not a fixed day count), since "quiet too long" means
+    // something different for a monthly bill than a quarterly one.
+    if (daysBetween(startDate, last.date) > avgGap * 2) continue;
+
     let expectedNext = new Date(last.date);
     for (let i = 0; i < 6; i++) {
       if (expectedNext >= new Date(startDate)) break;
       expectedNext = new Date(expectedNext); expectedNext.setDate(expectedNext.getDate() + Math.round(avgGap));
     }
     if (expectedNext >= new Date(startDate) && expectedNext < new Date(endDate)) {
-      results.push({ merchant, amount: Math.round(Math.abs(last.amount)), expectedDate: expectedNext.toISOString().slice(0, 10) });
+      const range = amountRange(sorted.map((tx) => Math.abs(tx.amount)));
+      results.push({
+        merchant,
+        amount: Math.round(Math.abs(last.amount)),
+        amountLow: range.low, amountHigh: range.high, isVariable: range.isVariable,
+        expectedDate: expectedNext.toISOString().slice(0, 10)
+      });
     }
   }
 
@@ -388,6 +401,9 @@ export function buildPaycheckTimeline(transactions, weeksAhead = 4, previousJobL
     const hasVariableIncome = paydaysInSegment.some((p) => p.isVariable);
     const bills = predictBillsInWindow(transactions, start, end);
     const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
+    const billsLow = bills.reduce((s, b) => s + b.amountLow, 0);
+    const billsHigh = bills.reduce((s, b) => s + b.amountHigh, 0);
+    const hasVariableBills = bills.some((b) => b.isVariable);
 
     segments.push({
       start,
@@ -401,9 +417,15 @@ export function buildPaycheckTimeline(transactions, weeksAhead = 4, previousJobL
       hasVariableIncome,
       bills,
       billsTotal,
+      billsLow,
+      billsHigh,
+      hasVariableBills,
       roomToWorkWith: Math.round(incomeExpected - billsTotal),
-      roomLow: Math.round(incomeLow - billsTotal),
-      roomHigh: Math.round(incomeHigh - billsTotal)
+      // Conservative (roomLow) assumes the worst realistic case: income
+      // comes in low AND bills come in high. Comfortable (roomHigh) assumes
+      // the opposite. Genuinely bill-specific, not a flat discount.
+      roomLow: Math.round(incomeLow - billsHigh),
+      roomHigh: Math.round(incomeHigh - billsLow)
     });
   }
 
@@ -630,6 +652,68 @@ export function worstOffendingWantMerchant(transactions, windowDays) {
  * actual detected bills, not just a number, so the person can see for
  * themselves whether anything's missing from the calculation.
  */
+/**
+ * Shared variance-aware range helper: a bill (or paycheck) that's been
+ * consistent historically gets a clean single number; one that's genuinely
+ * varied gets an honest range instead of a false-precision point estimate.
+ */
+function amountRange(amounts) {
+  const avg = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+  const variance = amounts.reduce((s, a) => s + (a - avg) ** 2, 0) / amounts.length;
+  const stdev = Math.sqrt(variance);
+  const isVariable = avg > 0 && stdev / avg > 0.05;
+  return {
+    typical: Math.round(avg),
+    low: isVariable ? Math.round(Math.max(avg - stdev, 0)) : Math.round(avg),
+    high: isVariable ? Math.round(avg + stdev) : Math.round(avg),
+    isVariable
+  };
+}
+
+/**
+ * Tiered options for how much to set aside toward the Safety Net this
+ * cycle — Easy Win / Solid Progress / Fast Track — scaled off typical
+ * wants spending for the cycle, same percentage basis as the Safety Net
+ * Builder Suggestions cut tiers, just applied to "redirect this much"
+ * instead of "cut this merchant by this much."
+ *
+ * Below 3 months covered: treated as urgent — the caller bakes a default
+ * tier's amount directly into Safe Spending Until Payday, same as a Need,
+ * so the number shown is genuinely already safe once wants spending is
+ * done. 3–6 months: still encouraged, shown as an option rather than
+ * pre-reserved. 6+ months: goal reached, not pushed.
+ */
+export function safetyNetReservationSuggestions(transactions, monthsCovered) {
+  if (monthsCovered != null && monthsCovered >= 6) {
+    return { applicable: false, isUrgent: false, reason: "Six months covered — Safety Net goal already reached. Contributions from here are optional." };
+  }
+
+  const cycle = detectPayCycle(transactions, 180);
+  const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
+  const now = new Date();
+  const cycleStart = new Date(now); cycleStart.setDate(cycleStart.getDate() - cycleDays);
+
+  const wantsSpend = transactions
+    .filter((tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category) && new Date(tx.date) >= cycleStart)
+    .reduce((s, tx) => s + Math.abs(tx.amount), 0);
+
+  const isUrgent = monthsCovered == null || monthsCovered < 3;
+
+  if (wantsSpend < 20) {
+    return { applicable: false, isUrgent, reason: "Not enough typical wants spending detected yet to suggest a reservation amount." };
+  }
+
+  const cyclePeriod = cycleDays >= 25 ? "month" : cycleDays >= 12 ? "two weeks" : "week";
+
+  const tiers = [
+    { key: "easy", label: "Easy Win", tagline: "This won't hurt.", pct: 0.10 },
+    { key: "solid", label: "Solid Progress", tagline: "I'm making real headway.", pct: 0.25 },
+    { key: "fast", label: "Fast Track", tagline: "I want to reach my goal sooner.", pct: 0.40 }
+  ].map((t) => ({ ...t, amount: Math.round(wantsSpend * t.pct) }));
+
+  return { applicable: true, isUrgent, cyclePeriod, cycleDays, wantsSpend: Math.round(wantsSpend), tiers, defaultTier: tiers[0] };
+}
+
 export function billsThisCycle(transactions) {
   const cycle = detectPayCycle(transactions, 180);
   const cycleDays = cycle ? Math.round(cycle.avgGapDays) : 30;
@@ -674,13 +758,23 @@ export function billsThisCycle(transactions) {
 
     const last = sorted.at(-1);
     const lastDate = new Date(last.date);
+    // Same staleness safeguard as the timeline predictor — a bill quiet for
+    // well beyond its own typical interval is probably no longer active.
+    if (daysBetween(now, last.date) > avgGap * 2) continue;
     const expectedNext = new Date(lastDate); expectedNext.setDate(expectedNext.getDate() + Math.round(avgGap));
 
-    const entry = { merchant, category: last.category, amount: Math.round(Math.abs(last.amount)), lastDate: last.date, avgGapDays: Math.round(avgGap) };
+    const range = amountRange(sorted.map((tx) => Math.abs(tx.amount)));
+    const entry = {
+      merchant, category: last.category,
+      amount: Math.round(Math.abs(last.amount)),
+      amountLow: range.low, amountHigh: range.high, isVariable: range.isVariable,
+      lastDate: last.date, avgGapDays: Math.round(avgGap)
+    };
 
     if (lastDate >= currentCycleStart) {
       paidThisCycle.push(entry);
     } else if (expectedNext <= nextPayday) {
+
       expectedNotYetPaid.push({ ...entry, expectedDate: expectedNext.toISOString().slice(0, 10) });
     }
   }
@@ -712,13 +806,18 @@ export function safeSpendingUntilPayday(transactions) {
   const incomeSoFar = cycleTx.filter((tx) => tx.amount > 0 && tx.category === "Income").reduce((s, tx) => s + tx.amount, 0);
   const spentSoFar = cycleTx.filter((tx) => tx.amount < 0 && !NON_SPEND_CATEGORIES.has(tx.category)).reduce((s, tx) => s + Math.abs(tx.amount), 0);
   const expectedBillsTotal = bills.expectedNotYetPaid.reduce((s, b) => s + b.amount, 0);
+  // Conservative end assumes every variable bill comes in at its own
+  // historical high; comfortable end assumes typical/low — genuinely
+  // bill-specific, not one flat discount applied across everything.
+  const expectedBillsHigh = bills.expectedNotYetPaid.reduce((s, b) => s + b.amountHigh, 0);
+  const expectedBillsLow = bills.expectedNotYetPaid.reduce((s, b) => s + b.amountLow, 0);
 
   if (!incomeSoFar) {
     return { available: false, reason: "Add income transactions to estimate safe spending until payday.", bills };
   }
 
-  const conservative = incomeSoFar - spentSoFar - expectedBillsTotal;
-  const comfortable = incomeSoFar - spentSoFar - (expectedBillsTotal * 0.7);
+  const conservative = incomeSoFar - spentSoFar - expectedBillsHigh;
+  const comfortable = incomeSoFar - spentSoFar - expectedBillsLow;
 
   return {
     available: true,
