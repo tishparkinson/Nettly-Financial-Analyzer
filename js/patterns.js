@@ -189,7 +189,7 @@ function shiftToBusinessDay(dateStr, direction) {
   return d.toISOString().slice(0, 10);
 }
 
-export function predictUpcomingPaydays(transactions, weeksAhead = 4) {
+export function predictUpcomingPaydays(transactions, weeksAhead = 4, previousJobLastPaycheckDate = null) {
   const incomeTx = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income");
   if (incomeTx.length < 2) {
     return { available: false, reason: "Need at least a couple of income deposits in history to predict paydays." };
@@ -217,10 +217,14 @@ export function predictUpcomingPaydays(transactions, weeksAhead = 4) {
   const today = new Date();
   const recurring = clusters.filter((c) => {
     if (new Set(c.entries.map((e) => e.date.slice(0, 7))).size < 2) return false;
+    const mostRecent = c.entries.map((e) => e.date).sort().at(-1);
+    // Explicit override wins immediately, even inside the 45-day window the
+    // automatic heuristic would otherwise still trust — this is exactly the
+    // gap a very recent job change falls into.
+    if (previousJobLastPaycheckDate && mostRecent <= previousJobLastPaycheckDate) return false;
     // Drop stale patterns — if the most recent instance is far older than a
     // typical pay interval, treat this as no longer active (e.g. a former
     // job) rather than keep predicting it forever.
-    const mostRecent = c.entries.map((e) => e.date).sort().at(-1);
     return daysBetween(today, mostRecent) <= 45;
   });
   if (!recurring.length) {
@@ -326,8 +330,8 @@ function predictBillsInWindow(transactions, startDate, endDate) {
  * out weekly-ish for a two-income household and biweekly/monthly for a
  * single earner, without ever needing to detect or label "the cycle."
  */
-export function buildPaycheckTimeline(transactions, weeksAhead = 4) {
-  const paydayResult = predictUpcomingPaydays(transactions, weeksAhead);
+export function buildPaycheckTimeline(transactions, weeksAhead = 4, previousJobLastPaycheckDate = null) {
+  const paydayResult = predictUpcomingPaydays(transactions, weeksAhead, previousJobLastPaycheckDate);
   if (!paydayResult.available) return { available: false, reason: paydayResult.reason };
 
   const today = new Date().toISOString().slice(0, 10);
