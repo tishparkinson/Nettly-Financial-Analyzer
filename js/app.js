@@ -38,7 +38,8 @@ import {
   feesSummary,
   merchantVelocity,
   detectPayCycle,
-  buildPaycheckTimeline
+  buildPaycheckTimeline,
+  safetyNetReservationSuggestions
 } from "./patterns.js";
 import {
   loadState,
@@ -1689,11 +1690,14 @@ function renderPaycheckTimeline() {
   }).join("");
 }
 
-function renderSafeSpendingBox() {
+let selectedReservationTier = "easy";
+
+function renderSafeSpendingBox(months) {
   const rangeEl = document.getElementById("safe-spending-range");
   const daysEl = document.getElementById("safe-spending-days");
   const detailEl = document.getElementById("safe-spending-detail");
   const billsEl = document.getElementById("safe-spending-bills");
+  const reserveEl = document.getElementById("safe-spending-reserve");
   if (!rangeEl || !billsEl) return;
 
   const safe = safeSpendingUntilPayday(state.transactions);
@@ -1702,12 +1706,55 @@ function renderSafeSpendingBox() {
     daysEl.textContent = "";
     detailEl.textContent = safe.reason || "";
     billsEl.innerHTML = "";
+    if (reserveEl) reserveEl.innerHTML = "";
     return;
   }
 
-  rangeEl.textContent = `${fmtMoney(safe.rangeLow)} – ${fmtMoney(safe.rangeHigh)}`;
+  const reservation = safetyNetReservationSuggestions(state.transactions, months);
+  let rangeLow = safe.rangeLow, rangeHigh = safe.rangeHigh;
+  let reserveHtml = "";
+
+  if (reservation.applicable) {
+    const chosen = reservation.tiers.find((t) => t.key === selectedReservationTier) || reservation.defaultTier;
+    if (reservation.isUrgent) {
+      // Baked in like a Need — the displayed ceiling already has this set
+      // aside, so what's shown is genuinely safe once wants are done.
+      rangeLow = Math.max(rangeLow - chosen.amount, 0);
+      rangeHigh = Math.max(rangeHigh - chosen.amount, 0);
+      reserveHtml = `
+        <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+          <p class="small" style="font-weight:600;color:var(--navy);">Already sets aside ${fmtMoney(chosen.amount)} this ${reservation.cyclePeriod} for the Safety Net (under 3 months covered right now, so this is treated like a Need) — pick a different pace:</p>
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
+            ${reservation.tiers.map((t) => `<button type="button" class="btn ${t.key === chosen.key ? "btn-primary" : "btn-ghost"} reserve-tier-btn" data-tier="${t.key}" style="flex:1;min-width:100px;margin:0;padding:0.4rem;font-size:0.78rem;">${t.label}<br><span style="font-weight:400;font-size:0.72rem;">${fmtMoney(t.amount)} · "${t.tagline}"</span></button>`).join("")}
+          </div>
+        </div>`;
+    } else {
+      reserveHtml = `
+        <div style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+          <p class="small" style="font-weight:600;color:var(--navy);">Past 3 months covered — still encouraged, not required. Options for this ${reservation.cyclePeriod}:</p>
+          <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-top:0.4rem;">
+            ${reservation.tiers.map((t) => `<div class="small" style="flex:1;min-width:100px;text-align:center;padding:0.4rem;border:1px solid var(--border);border-radius:8px;"><strong>${t.label}</strong><br>${fmtMoney(t.amount)}<br><span style="font-size:0.72rem;">"${t.tagline}"</span></div>`).join("")}
+          </div>
+        </div>`;
+    }
+  } else if (months >= 6) {
+    // Goal reached (6+ months) — no push, just a quiet acknowledgment.
+    reserveHtml = `<p class="small" style="margin-top:0.5rem;color:var(--teal);">🎉 Six months covered — Safety Net goal reached. Anything added from here is a bonus.</p>`;
+  }
+
+  rangeEl.textContent = `${fmtMoney(rangeLow)} – ${fmtMoney(rangeHigh)}`;
   daysEl.textContent = `${safe.daysUntilPayday} day${safe.daysUntilPayday !== 1 ? "s" : ""} until payday`;
   detailEl.textContent = `A ceiling, not a target — spending less than this and moving the rest to the Safety Net is the better outcome, not just an option. Based on past charges only — a rate increase, a new charge, or a weather-driven utility spike won't show up here until it's happened at least once. Bills that have varied historically get a wider range below; steady ones get a tighter one.`;
+
+  if (reserveEl) {
+    reserveEl.innerHTML = reserveHtml;
+    reserveEl.querySelectorAll(".reserve-tier-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedReservationTier = btn.dataset.tier;
+        renderSafeSpendingBox(months);
+      });
+    });
+  }
 
   const paidHtml = safe.bills.paidThisCycle.length
     ? `<div style="margin-bottom:0.3rem;"><strong>Already paid this cycle:</strong>${safe.bills.paidThisCycle.map((b) =>
@@ -1758,7 +1805,7 @@ function renderDashboard() {
   }
 
   renderPaycheckTimeline();
-  renderSafeSpendingBox();
+  renderSafeSpendingBox(months);
   renderCantMissZone(txs);
   document.getElementById("months-covered").textContent = fmtMonths(months);
   const monthsSubEl = document.getElementById("months-covered-needs-sub");
@@ -1798,19 +1845,29 @@ function renderDashboard() {
 
   const nudgeEl = document.getElementById("sn-contribution-nudge");
   if (nudgeEl) {
-    const lastUpdateDate = state.safetyNetHistory.at(-1)?.date;
-    const cutoff = lastUpdateDate || (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })();
-    const contributions = state.transactions.filter((tx) => tx.category === "Safety Net Contribution" && tx.amount < 0 && tx.date > cutoff);
-    const total = Math.round(contributions.reduce((s, tx) => s + Math.abs(tx.amount), 0));
-    if (total > 0) {
-      nudgeEl.classList.remove("hidden");
-      nudgeEl.innerHTML = `💰 Looks like ${fmtMoney(total)} moved toward savings since your last update — <a href="#" id="sn-nudge-link" style="font-weight:600;">update your Safety Net balance</a> to make sure it's reflected.`;
-      document.getElementById("sn-nudge-link")?.addEventListener("click", (e) => {
-        e.preventDefault();
-        show("safety");
-        populateSafetyNetAccountList();
-        renderSafetySummary();
-      });
+    // A "transfer to savings" transaction only reliably means the Safety
+    // Net grew if it lives in a dedicated savings account (or cash) — if
+    // it's tracked against checking (entire account or a protected floor),
+    // that same transaction means money LEFT the account the Safety Net is
+    // measured against, which could mean it shrank, not grew.
+    const checkingBased = (state.safetyNet.accounts || []).some((a) => a.type === "entire_checking" || a.type === "partial");
+    if (!checkingBased) {
+      const lastUpdateDate = state.safetyNetHistory.at(-1)?.date;
+      const cutoff = lastUpdateDate || (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })();
+      const contributions = state.transactions.filter((tx) => tx.category === "Safety Net Contribution" && tx.amount < 0 && tx.date > cutoff);
+      const total = Math.round(contributions.reduce((s, tx) => s + Math.abs(tx.amount), 0));
+      if (total > 0) {
+        nudgeEl.classList.remove("hidden");
+        nudgeEl.innerHTML = `💰 Looks like ${fmtMoney(total)} moved toward savings since your last update — <a href="#" id="sn-nudge-link" style="font-weight:600;">update your Safety Net balance</a> to make sure it's reflected.`;
+        document.getElementById("sn-nudge-link")?.addEventListener("click", (e) => {
+          e.preventDefault();
+          show("safety");
+          populateSafetyNetAccountList();
+          renderSafetySummary();
+        });
+      } else {
+        nudgeEl.classList.add("hidden");
+      }
     } else {
       nudgeEl.classList.add("hidden");
     }
