@@ -1661,14 +1661,17 @@ function renderPaycheckTimeline() {
     const dateLabel = s.isFirstSegment
       ? `Right now through ${s.end}`
       : `${s.start} – ${s.end}`;
+    const expectedLabel = s.hasVariableIncome
+      ? `${fmtMoney(s.incomeLow)}–${fmtMoney(s.incomeHigh)}`
+      : fmtMoney(s.incomeExpected);
     const incomeLine = s.isFirstSegment
-      ? `${fmtMoney(s.alreadyOnHand)} already on hand${s.incomeExpected > s.alreadyOnHand ? ` + ${fmtMoney(s.incomeExpected - s.alreadyOnHand)} arriving` : ""}`
-      : `${fmtMoney(s.incomeExpected)} expected`;
+      ? `${fmtMoney(s.alreadyOnHand)} already on hand${s.incomeExpected > s.alreadyOnHand ? ` + ${expectedLabel} arriving` : ""}`
+      : `${expectedLabel} expected${s.hasVariableIncome ? " — this one varies, so it's a range, not a guarantee" : ""}`;
     const billsList = s.bills.length
       ? s.bills.map((b) => `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;font-size:0.82rem;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`).join("")
       : `<p class="small" style="margin:0.2rem 0;">No bills expected in this window.</p>`;
     const roomHtml = s.roomToWorkWith > 0
-      ? `<p class="small" style="margin-top:0.35rem;color:var(--teal);font-weight:600;">${fmtMoney(s.roomToWorkWith)} left after bills — a chance to add to the Safety Net.</p>`
+      ? `<p class="small" style="margin-top:0.35rem;color:var(--teal);font-weight:600;">${s.hasVariableIncome ? `${fmtMoney(s.roomLow)}–${fmtMoney(s.roomHigh)}` : fmtMoney(s.roomToWorkWith)} left after bills — a chance to add to the Safety Net.</p>`
       : `<p class="small" style="margin-top:0.35rem;color:var(--muted);">Bills use up what's expected in this window.</p>`;
 
     return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);">
