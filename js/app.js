@@ -949,6 +949,12 @@ snType.addEventListener("change", () => {
     snType.value === "cash" ? "Cash on hand ($)" : "Current balance ($)";
 });
 
+document.getElementById("btn-update-sn")?.addEventListener("click", () => {
+  show("safety");
+  populateSafetyNetAccountList();
+  renderSafetySummary();
+});
+
 document.getElementById("btn-add-sn").addEventListener("click", () => {
   const type = snType.value;
   const label = document.getElementById("sn-label").value.trim() || "Safety Net";
@@ -1668,10 +1674,10 @@ function renderPaycheckTimeline() {
       ? `${fmtMoney(s.alreadyOnHand)} already on hand${s.incomeExpected > s.alreadyOnHand ? ` + ${expectedLabel} arriving` : ""}`
       : `${expectedLabel} expected${s.hasVariableIncome ? " — this one varies, so it's a range, not a guarantee" : ""}`;
     const billsList = s.bills.length
-      ? s.bills.map((b) => `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;font-size:0.82rem;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`).join("")
+      ? s.bills.map((b) => `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;font-size:0.82rem;"><span>${escapeHtml(b.merchant)}</span><span>${b.isVariable ? `${fmtMoney(b.amountLow)}–${fmtMoney(b.amountHigh)}` : fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`).join("")
       : `<p class="small" style="margin:0.2rem 0;">No bills expected in this window.</p>`;
     const roomHtml = s.roomToWorkWith > 0
-      ? `<p class="small" style="margin-top:0.35rem;color:var(--teal);font-weight:600;">${s.hasVariableIncome ? `${fmtMoney(s.roomLow)}–${fmtMoney(s.roomHigh)}` : fmtMoney(s.roomToWorkWith)} left after bills — a chance to add to the Safety Net.</p>`
+      ? `<p class="small" style="margin-top:0.35rem;color:var(--teal);font-weight:600;">${(s.hasVariableIncome || s.hasVariableBills) ? `${fmtMoney(s.roomLow)}–${fmtMoney(s.roomHigh)}` : fmtMoney(s.roomToWorkWith)} left after bills — a chance to add to the Safety Net.</p>`
       : `<p class="small" style="margin-top:0.35rem;color:var(--muted);">Bills use up what's expected in this window.</p>`;
 
     return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);">
@@ -1701,7 +1707,7 @@ function renderSafeSpendingBox() {
 
   rangeEl.textContent = `${fmtMoney(safe.rangeLow)} – ${fmtMoney(safe.rangeHigh)}`;
   daysEl.textContent = `${safe.daysUntilPayday} day${safe.daysUntilPayday !== 1 ? "s" : ""} until payday`;
-  detailEl.textContent = `A range, not a precise number — bills that might come in lighter than usual push you toward the higher end.`;
+  detailEl.textContent = `A ceiling, not a target — spending less than this and moving the rest to the Safety Net is the better outcome, not just an option. Based on past charges only — a rate increase, a new charge, or a weather-driven utility spike won't show up here until it's happened at least once. Bills that have varied historically get a wider range below; steady ones get a tighter one.`;
 
   const paidHtml = safe.bills.paidThisCycle.length
     ? `<div style="margin-bottom:0.3rem;"><strong>Already paid this cycle:</strong>${safe.bills.paidThisCycle.map((b) =>
@@ -1710,7 +1716,7 @@ function renderSafeSpendingBox() {
     : "";
   const expectedHtml = safe.bills.expectedNotYetPaid.length
     ? `<div><strong>Expected before next payday:</strong>${safe.bills.expectedNotYetPaid.map((b) =>
-        `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`
+        `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;"><span>${escapeHtml(b.merchant)}</span><span>${b.isVariable ? `${fmtMoney(b.amountLow)}–${fmtMoney(b.amountHigh)}` : fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`
       ).join("")}</div>`
     : `<p class="small">No upcoming bills detected — if that's missing something, this estimate may run high.</p>`;
 
@@ -1788,6 +1794,26 @@ function renderDashboard() {
       if (parts.length) historyText += ` ${parts.join(" · ")}.`;
     }
     document.getElementById("sn-history").textContent = historyText;
+  }
+
+  const nudgeEl = document.getElementById("sn-contribution-nudge");
+  if (nudgeEl) {
+    const lastUpdateDate = state.safetyNetHistory.at(-1)?.date;
+    const cutoff = lastUpdateDate || (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })();
+    const contributions = state.transactions.filter((tx) => tx.category === "Safety Net Contribution" && tx.amount < 0 && tx.date > cutoff);
+    const total = Math.round(contributions.reduce((s, tx) => s + Math.abs(tx.amount), 0));
+    if (total > 0) {
+      nudgeEl.classList.remove("hidden");
+      nudgeEl.innerHTML = `💰 Looks like ${fmtMoney(total)} moved toward savings since your last update — <a href="#" id="sn-nudge-link" style="font-weight:600;">update your Safety Net balance</a> to make sure it's reflected.`;
+      document.getElementById("sn-nudge-link")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        show("safety");
+        populateSafetyNetAccountList();
+        renderSafetySummary();
+      });
+    } else {
+      nudgeEl.classList.add("hidden");
+    }
   }
 
   const nextM = months != null ? Math.ceil(months) + 1 : 1;
