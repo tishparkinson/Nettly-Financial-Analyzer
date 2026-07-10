@@ -217,6 +217,20 @@
         <div class="small" id="months-covered-needs-sub" style="margin-top:0.35rem;color:var(--muted);"></div>
       </div>
 
+      <div class="card" id="paycheck-timeline-box" style="border:1.5px solid var(--navy);">
+        <h3 style="margin:0 0 0.5rem;">The Next 4 Weeks</h3>
+        <div id="paycheck-timeline-content"></div>
+        <details style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
+          <summary style="font-size:0.82rem;color:var(--teal);cursor:pointer;font-weight:600;list-style:none;">▸ Switched jobs in the last couple months?</summary>
+          <div style="margin-top:0.5rem;">
+            <label>Date of the last paycheck from the previous job</label>
+            <input id="prev-job-last-paycheck" type="date">
+            <button type="button" class="btn btn-secondary" id="btn-save-prev-job-date" style="margin-top:0.5rem;">Save</button>
+            <p class="small" style="margin-top:0.4rem;">This just stops the old paycheck pattern from still being predicted — no need to enter anything about the new job, that shows up in the pasted transactions on its own.</p>
+          </div>
+        </details>
+      </div>
+
       <div id="cash-gap-banner" class="hidden" style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;"></div>
 
       <div class="card" id="safe-spending-box" style="border:1.5px solid var(--gold);">
@@ -330,30 +344,53 @@
       </div>
 
       <div class="card" id="cash-entry-section">
-        <h3>Log a Cash Purchase</h3>
-        <p class="small">Cash purchases can't be tracked automatically — logging them here keeps your spending picture complete.</p>
-        <label>What did you buy?</label>
-        <input id="cash-entry-desc" placeholder="e.g. Haircut, farmers market, gas">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
-          <div>
-            <label>Amount ($)</label>
-            <input id="cash-entry-amount" type="number" min="0" step="0.01" placeholder="0.00">
-          </div>
-          <div>
-            <label>Date</label>
-            <input id="cash-entry-date" type="date">
-          </div>
+        <h3>Log Cash</h3>
+        <p class="small">Cash isn't tracked automatically — logging it here keeps the picture complete.</p>
+        <div style="display:flex;gap:0.5rem;margin-bottom:0.5rem;">
+          <button type="button" class="btn btn-secondary cash-entry-mode-btn active" data-mode="purchase" style="flex:1;margin:0;">Purchase</button>
+          <button type="button" class="btn btn-secondary cash-entry-mode-btn" data-mode="income" style="flex:1;margin:0;">Income (tips, etc.)</button>
         </div>
-        <label>Category</label>
-        <select id="cash-entry-category"></select>
-        <label>Need or Want?</label>
-        <select id="cash-entry-needwant">
-          <option value="need">Need</option>
-          <option value="want">Want</option>
-        </select>
-        <label>Tags (optional)</label>
-        <div id="cash-entry-tag-chips" class="tag-chips"></div>
-        <button type="button" class="btn btn-secondary" id="btn-add-cash-entry">Log this purchase</button>
+
+        <div id="cash-entry-purchase-fields">
+          <label>What did you buy?</label>
+          <input id="cash-entry-desc" placeholder="e.g. Haircut, farmers market, gas">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+            <div>
+              <label>Amount ($)</label>
+              <input id="cash-entry-amount" type="number" min="0" step="0.01" placeholder="0.00">
+            </div>
+            <div>
+              <label>Date</label>
+              <input id="cash-entry-date" type="date">
+            </div>
+          </div>
+          <label>Need or Want?</label>
+          <select id="cash-entry-needwant">
+            <option value="need">Need</option>
+            <option value="want">Want</option>
+          </select>
+          <label>Tags (optional)</label>
+          <div id="cash-entry-tag-chips" class="tag-chips"></div>
+          <button type="button" class="btn btn-secondary" id="btn-add-cash-entry">Log this purchase</button>
+        </div>
+
+        <div id="cash-entry-income-fields" class="hidden">
+          <p class="small" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;">💡 If this cash can go into a bank account, that's worth doing — it becomes trackable automatically from then on, instead of needing to be logged by hand every time. This is for whatever stays cash.</p>
+          <label>Where from?</label>
+          <input id="cash-income-desc" placeholder="e.g. Tips, side gig, cash gift">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+            <div>
+              <label>Amount ($)</label>
+              <input id="cash-income-amount" type="number" min="0" step="0.01" placeholder="0.00">
+            </div>
+            <div>
+              <label>Date</label>
+              <input id="cash-income-date" type="date">
+            </div>
+          </div>
+          <button type="button" class="btn btn-secondary" id="btn-add-cash-income">Log this income</button>
+        </div>
+
         <p class="small hidden" id="cash-entry-confirm" style="color:var(--teal);font-weight:600;">✓ Logged.</p>
       </div>
 
