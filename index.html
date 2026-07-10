@@ -57,12 +57,18 @@
         <p class="sub">No account credentials.</p>
         <p class="sub">No financial data stored on Nettly servers.</p>
       </header>
-      <button type="button" class="btn btn-primary" id="btn-new">Start New Financial Snapshot</button>
-      <button type="button" class="btn btn-secondary" id="btn-continue">Continue from Previous Snapshot</button>
+      <div id="home-first-time">
+        <button type="button" class="btn btn-primary" id="btn-new">Start New Financial Snapshot</button>
+        <button type="button" class="btn btn-secondary" id="btn-continue">Continue from Previous Snapshot</button>
+        <p class="small" style="margin-top:1rem;text-align:center;">
+          🔒 <strong>Your financial data never touches our servers.</strong> It stays on your computer only — no cloud, no database, no one else can see it. The tradeoff: if you close this tab without downloading your snapshot, that work is gone. Once you've reviewed your first week of transactions, a <strong>💾 Download Snapshot</strong> button will appear in the top-right corner — keep it handy and click it before you close this window.
+        </p>
+      </div>
+      <div id="home-returning" class="hidden">
+        <button type="button" class="btn btn-primary" id="btn-home-add-more">Add More Transactions</button>
+        <button type="button" class="btn btn-ghost" id="btn-home-start-over" style="color:#b42318;border-color:#f5c6c6;">Start Over</button>
+      </div>
       <input type="file" id="snapshot-upload" accept=".ntly,.json" class="hidden">
-      <p class="small" style="margin-top:1rem;text-align:center;">
-        🔒 <strong>Your financial data never touches our servers.</strong> It stays on your computer only — no cloud, no database, no one else can see it. The tradeoff: if you close this tab without downloading your snapshot, that work is gone. Once you've reviewed your first week of transactions, a <strong>💾 Download Snapshot</strong> button will appear in the top-right corner — keep it handy and click it before you close this window.
-      </p>
     </section>
 
     <!-- UPLOAD -->
@@ -104,15 +110,16 @@
 
     <!-- GUIDED NEEDS WIZARD -->
     <section id="screen-needs-wizard" class="screen">
-      <div id="wizard-checklist" style="display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.75rem;"></div>
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:0.5rem;flex-wrap:wrap;">
-        <h2 style="margin:0;color:var(--navy);" id="wizard-slot-title">Set your Needs</h2>
-        <span class="small" id="wizard-progress"></span>
+      <div style="background:var(--border);border-radius:999px;height:8px;margin-bottom:0.5rem;">
+        <div id="wizard-progress-bar" style="background:var(--teal);height:8px;border-radius:999px;transition:width 0.3s;width:0%;"></div>
       </div>
-      <p class="small" id="wizard-slot-hint"></p>
-      <div id="wizard-merchant-list"></div>
+      <span class="small" id="wizard-progress"></span>
+      <p class="small" id="wizard-import-summary" style="color:var(--muted);"></p>
+      <h2 style="margin:0.5rem 0 0;color:var(--navy);font-size:1.5rem;font-weight:800;" id="wizard-slot-title">Housing</h2>
+      <p style="font-size:1rem;line-height:1.4;margin:0.4rem 0 0.75rem;" id="wizard-slot-hint"></p>
+      <div id="wizard-merchant-list" style="max-height:60vh;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:0 0.75rem;"></div>
       <div style="display:flex;gap:0.5rem;margin-top:0.75rem;flex-wrap:wrap;">
-        <button type="button" class="btn btn-ghost" id="btn-wizard-none" style="flex:1;margin:0;">None — not a separate bill for me</button>
+        <button type="button" class="btn btn-ghost" id="btn-wizard-none" style="flex:1;margin:0;">None — not a bill for me currently</button>
         <button type="button" class="btn btn-primary" id="btn-wizard-continue" style="flex:1;margin:0;">Continue →</button>
       </div>
     </section>
@@ -210,6 +217,8 @@
         <div class="small" id="months-covered-needs-sub" style="margin-top:0.35rem;color:var(--muted);"></div>
       </div>
 
+      <div id="cash-gap-banner" class="hidden" style="background:#fef6e4;border:1px solid #f0d080;border-radius:10px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;color:#7a5000;"></div>
+
       <div class="card" id="safe-spending-box" style="border:1.5px solid var(--gold);">
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:0.5rem;">
           <span style="font-size:0.85rem;font-weight:600;color:var(--navy);">Safe Spending Until Payday</span>
@@ -298,14 +307,20 @@
       <div class="card">
         <h3>Here's What To Do</h3>
         <p class="small">Concrete options, calculated from your own numbers — no single "right" choice, just what's realistic this month.</p>
+        <div id="needs-share-callout" class="hidden" style="margin-bottom:0.75rem;padding-bottom:0.6rem;border-bottom:1px solid var(--border);"></div>
         <div id="safety-net-suggestions"></div>
         <div id="impulse-spending-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="visit-frequency-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="income-allocation-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <div id="small-purchase-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
+        <div id="fees-callout" class="hidden" style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);"></div>
         <details style="margin-top:0.75rem;padding-top:0.6rem;border-top:1px solid var(--border);">
           <summary style="font-size:0.85rem;font-weight:600;color:var(--navy);cursor:pointer;list-style:none;">▸ Average spend per merchant (day / week / month)</summary>
           <div id="merchant-spend-rates" style="margin-top:0.5rem;"></div>
+        </details>
+        <details style="margin-top:0.5rem;">
+          <summary style="font-size:0.85rem;font-weight:600;color:var(--navy);cursor:pointer;list-style:none;">▸ Merchant Velocity — how often, on average</summary>
+          <div id="merchant-velocity" style="margin-top:0.5rem;"></div>
         </details>
       </div>
 
