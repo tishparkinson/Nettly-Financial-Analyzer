@@ -131,6 +131,253 @@ export function detectPayCycle(transactions, windowDays) {
 }
 
 /**
+ * Predicts upcoming payday DATES directly from day-of-month history, rather
+ * than computing one "cycle length" number and adding it to the last
+ * payday. This sidesteps the multi-earner problem entirely: two staggered
+ * earners just show up as two separate recurring day-of-month clusters
+ * (e.g. "around the 1st" and "around the 10th"), each correctly detected
+ * and projected forward on its own — no need to force everything into one
+ * interval that doesn't represent anyone's actual pay schedule.
+ */
+// U.S. federal holidays, also observed by banks — computed per year rather
+// than hardcoded, since several float (nth weekday of month).
+function getBankHolidays(year) {
+  const nthWeekday = (y, month, weekday, n) => {
+    const d = new Date(y, month, 1);
+    let count = 0;
+    while (true) {
+      if (d.getDay() === weekday) { count++; if (count === n) return new Date(d); }
+      d.setDate(d.getDate() + 1);
+    }
+  };
+  const lastWeekday = (y, month, weekday) => {
+    const d = new Date(y, month + 1, 0);
+    while (d.getDay() !== weekday) d.setDate(d.getDate() - 1);
+    return new Date(d);
+  };
+  const dates = [
+    new Date(year, 0, 1),               // New Year's Day
+    nthWeekday(year, 0, 1, 3),          // MLK Day — 3rd Monday of Jan
+    nthWeekday(year, 1, 1, 3),          // Presidents Day — 3rd Monday of Feb
+    lastWeekday(year, 4, 1),            // Memorial Day — last Monday of May
+    new Date(year, 5, 19),              // Juneteenth
+    new Date(year, 6, 4),               // Independence Day
+    nthWeekday(year, 8, 1, 1),          // Labor Day — 1st Monday of Sept
+    nthWeekday(year, 9, 1, 2),          // Columbus Day — 2nd Monday of Oct
+    new Date(year, 10, 11),             // Veterans Day
+    nthWeekday(year, 10, 4, 4),         // Thanksgiving — 4th Thursday of Nov
+    new Date(year, 11, 25)              // Christmas
+  ];
+  return new Set(dates.map((d) => d.toISOString().slice(0, 10)));
+}
+
+function isWeekendOrHoliday(dateStr) {
+  const d = new Date(dateStr + "T12:00:00");
+  const day = d.getDay();
+  if (day === 0 || day === 6) return true;
+  return getBankHolidays(d.getFullYear()).has(dateStr);
+}
+
+function shiftToBusinessDay(dateStr, direction) {
+  let d = new Date(dateStr + "T12:00:00");
+  const step = direction === "after" ? 1 : -1;
+  let guard = 0;
+  while (isWeekendOrHoliday(d.toISOString().slice(0, 10)) && guard < 10) {
+    d.setDate(d.getDate() + step);
+    guard++;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+export function predictUpcomingPaydays(transactions, weeksAhead = 4) {
+  const incomeTx = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income");
+  if (incomeTx.length < 2) {
+    return { available: false, reason: "Need at least a couple of income deposits in history to predict paydays." };
+  }
+
+  const dayBuckets = new Map();
+  for (const tx of incomeTx) {
+    const day = new Date(tx.date + "T12:00:00").getDate();
+    if (!dayBuckets.has(day)) dayBuckets.set(day, []);
+    dayBuckets.get(day).push({ date: tx.date, amount: tx.amount });
+  }
+
+  const sortedDays = [...dayBuckets.keys()].sort((a, b) => a - b);
+  const clusters = [];
+  for (const day of sortedDays) {
+    const last = clusters.at(-1);
+    if (last && day - last.days.at(-1) <= 3) {
+      last.days.push(day);
+      last.entries.push(...dayBuckets.get(day));
+    } else {
+      clusters.push({ days: [day], entries: [...dayBuckets.get(day)] });
+    }
+  }
+
+  const today = new Date();
+  const recurring = clusters.filter((c) => {
+    if (new Set(c.entries.map((e) => e.date.slice(0, 7))).size < 2) return false;
+    // Drop stale patterns — if the most recent instance is far older than a
+    // typical pay interval, treat this as no longer active (e.g. a former
+    // job) rather than keep predicting it forever.
+    const mostRecent = c.entries.map((e) => e.date).sort().at(-1);
+    return daysBetween(today, mostRecent) <= 45;
+  });
+  if (!recurring.length) {
+    return { available: false, reason: "No recurring, currently-active payday pattern detected yet — need at least 2 months of consistent income deposits." };
+  }
+
+  const patterns = recurring.map((c) => {
+    // Use the mode (most common single day), not the mean — a single
+    // weekend/holiday shift shouldn't drag a clean pattern off-center.
+    const counts = new Map();
+    for (const e of c.entries) {
+      const d = new Date(e.date + "T12:00:00").getDate();
+      counts.set(d, (counts.get(d) || 0) + 1);
+    }
+    const modeDay = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+
+    // Learn the employer's actual shift convention from evidence: for each
+    // real payment, check whether the "natural" date (modeDay applied to
+    // that occurrence's month) would have landed on a weekend/holiday, and
+    // if so, which direction the real payment actually shifted.
+    let beforeVotes = 0, afterVotes = 0;
+    for (const e of c.entries) {
+      const d = new Date(e.date + "T12:00:00");
+      const naturalDate = new Date(d.getFullYear(), d.getMonth(), modeDay);
+      const naturalStr = naturalDate.toISOString().slice(0, 10);
+      if (isWeekendOrHoliday(naturalStr) && naturalStr !== e.date) {
+        if (e.date < naturalStr) beforeVotes++;
+        else if (e.date > naturalStr) afterVotes++;
+      }
+    }
+    // Default to "before" (the more common convention) when there's no
+    // direct evidence either way in this person's own history yet.
+    const shiftDirection = afterVotes > beforeVotes ? "after" : "before";
+
+    return {
+      dayOfMonth: modeDay,
+      avgAmount: Math.round(c.entries.reduce((s, e) => s + e.amount, 0) / c.entries.length),
+      shiftDirection
+    };
+  });
+
+  const endDate = new Date(today); endDate.setDate(endDate.getDate() + weeksAhead * 7);
+
+  const predicted = [];
+  let cursor = new Date(today.getFullYear(), today.getMonth(), 1);
+  for (let m = 0; m < 3; m++) {
+    for (const p of patterns) {
+      const lastDayOfCursorMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+      const naturalDate = new Date(cursor.getFullYear(), cursor.getMonth(), Math.min(p.dayOfMonth, lastDayOfCursorMonth));
+      let dateStr = naturalDate.toISOString().slice(0, 10);
+      const wasShifted = isWeekendOrHoliday(dateStr);
+      if (wasShifted) dateStr = shiftToBusinessDay(dateStr, p.shiftDirection);
+
+      if (dateStr >= today.toISOString().slice(0, 10) && dateStr <= endDate.toISOString().slice(0, 10)) {
+        predicted.push({ date: dateStr, expectedAmount: p.avgAmount, wasShifted });
+      }
+    }
+    cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+  }
+  predicted.sort((a, b) => a.date.localeCompare(b.date));
+
+  return { available: predicted.length > 0, paydays: predicted };
+}
+
+function predictBillsInWindow(transactions, startDate, endDate) {
+  const byMerchant = new Map();
+  for (const tx of transactions) {
+    if (tx.amount >= 0 || tx.needWant !== "need" || NON_SPEND_CATEGORIES.has(tx.category)) continue;
+    const m = tx.merchant || tx.description;
+    if (!byMerchant.has(m)) byMerchant.set(m, []);
+    byMerchant.get(m).push(tx);
+  }
+
+  const results = [];
+  for (const [merchant, txs] of byMerchant) {
+    if (txs.length < 2) continue;
+    const sorted = [...txs].sort((a, b) => a.date.localeCompare(b.date));
+    const gaps = [];
+    for (let i = 1; i < sorted.length; i++) gaps.push(daysBetween(sorted[i].date, sorted[i - 1].date));
+    const avgGap = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+    if (avgGap < 20) continue;
+    const gapStdev = Math.sqrt(gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length);
+    if (gapStdev / avgGap > 0.5) continue;
+
+    const last = sorted.at(-1);
+    let expectedNext = new Date(last.date);
+    for (let i = 0; i < 6; i++) {
+      if (expectedNext >= new Date(startDate)) break;
+      expectedNext = new Date(expectedNext); expectedNext.setDate(expectedNext.getDate() + Math.round(avgGap));
+    }
+    if (expectedNext >= new Date(startDate) && expectedNext < new Date(endDate)) {
+      results.push({ merchant, amount: Math.round(Math.abs(last.amount)), expectedDate: expectedNext.toISOString().slice(0, 10) });
+    }
+  }
+
+  return results.sort((a, b) => a.expectedDate.localeCompare(b.expectedDate));
+}
+
+/**
+ * Builds the rolling "next N weeks" paycheck-to-paycheck timeline: segments
+ * between predicted paydays, each with expected income, bills expected due
+ * in that window, and a simple "room to work with" figure. Naturally comes
+ * out weekly-ish for a two-income household and biweekly/monthly for a
+ * single earner, without ever needing to detect or label "the cycle."
+ */
+export function buildPaycheckTimeline(transactions, weeksAhead = 4) {
+  const paydayResult = predictUpcomingPaydays(transactions, weeksAhead);
+  if (!paydayResult.available) return { available: false, reason: paydayResult.reason };
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // The very first segment (today until the next predicted payday) isn't
+  // "new" income — it's money already received from the most recent actual
+  // payday(s), still being spent down. Find those so the first segment
+  // reflects real current standing instead of showing $0.
+  const incomeTx = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income" && tx.date < today);
+  const last30 = incomeTx.filter((tx) => daysBetween(today, tx.date) <= 20).sort((a, b) => b.date.localeCompare(a.date));
+  const onHandAmount = Math.round(last30.reduce((s, tx) => s + tx.amount, 0));
+
+  const boundaries = [today, ...paydayResult.paydays.map((p) => p.date)];
+  const uniqueBoundaries = [...new Set(boundaries)].sort();
+
+  const segments = [];
+  for (let i = 0; i < uniqueBoundaries.length; i++) {
+    const start = uniqueBoundaries[i];
+    const end = uniqueBoundaries[i + 1] || (() => {
+      const d = new Date(start); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10);
+    })();
+    if (start === end) continue;
+
+    const paydaysInSegment = paydayResult.paydays.filter((p) => p.date >= start && p.date < end);
+    const isFirstSegment = i === 0;
+    const incomeExpected = isFirstSegment
+      ? onHandAmount + paydaysInSegment.reduce((s, p) => s + p.expectedAmount, 0)
+      : paydaysInSegment.reduce((s, p) => s + p.expectedAmount, 0);
+    const bills = predictBillsInWindow(transactions, start, end);
+    const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
+
+    segments.push({
+      start,
+      end,
+      isFirstSegment,
+      alreadyOnHand: isFirstSegment ? onHandAmount : 0,
+      paydaysInSegment,
+      incomeExpected,
+      bills,
+      billsTotal,
+      roomToWorkWith: Math.round(incomeExpected - billsTotal)
+    });
+  }
+
+  return { available: true, segments, weeksAhead };
+}
+
+
+
+/**
  * Detects recurring "payday" deposits and compares spend in the days right
  * after payday vs. the rest of the pay cycle. Needs at least 3 confidently-
  * spaced income deposits to report — irregular income is left alone rather
