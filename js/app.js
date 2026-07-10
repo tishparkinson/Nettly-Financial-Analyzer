@@ -1763,6 +1763,11 @@ function renderSafeSpendingBox(months) {
       }
     } else if (months >= 6) {
       reserveHtml = `<p class="small" style="margin-top:0.5rem;color:var(--teal);">🎉 Six months covered — Safety Net goal reached. Anything added from here is a bonus.</p>`;
+    } else {
+      // Genuinely tight cycle — the tier math found too little wants
+      // spending to suggest a number from. Say so plainly, without pressure
+      // and without implying anything was done wrong.
+      reserveHtml = `<p class="small" style="margin-top:0.5rem;color:var(--muted);">This one looks tight — that happens, and it doesn't erase what's already been added. The next paycheck might have more room, or it might not; either way, this one's fine as it is.</p>`;
     }
     rangeEl.style.color = rangeLow < 0 ? "#b42318" : "var(--navy)";
   }
