@@ -36,7 +36,8 @@ import {
   visitFrequencyChange,
   overallNeedsShare,
   feesSummary,
-  merchantVelocity
+  merchantVelocity,
+  detectPayCycle
 } from "./patterns.js";
 import {
   loadState,
@@ -1621,10 +1622,13 @@ function renderDashboard() {
 
   const cashGapEl = document.getElementById("cash-gap-banner");
   if (cashGapEl) {
-    const gap = cashGapSummary(state.transactions, 30);
+    const cycle = detectPayCycle(state.transactions, 180);
+    const gapWindow = cycle ? Math.round(cycle.avgGapDays) : 30;
+    const gap = cashGapSummary(state.transactions, gapWindow);
+    const periodLabel = gapWindow >= 25 ? "month" : gapWindow >= 12 ? "two weeks" : "week";
     if (gap.hasWithdrawals && gap.cashGap > 5) {
       cashGapEl.classList.remove("hidden");
-      cashGapEl.innerHTML = `💵 ${fmtMoney(gap.cashWithdrawn)} withdrawn as cash in the last 30 days, but only ${fmtMoney(gap.cashLogged)} logged as spent — ${fmtMoney(gap.cashGap)} is unaccounted for. <a href="#" id="cash-gap-log-link" style="color:#7a5000;font-weight:600;">Log it now</a> so it shows up in your picture.`;
+      cashGapEl.innerHTML = `💵 ${fmtMoney(gap.cashWithdrawn)} withdrawn as cash in the last ${periodLabel}, but only ${fmtMoney(gap.cashLogged)} logged as spent — ${fmtMoney(gap.cashGap)} is unaccounted for. <a href="#" id="cash-gap-log-link" style="color:#7a5000;font-weight:600;">Log it now</a> so it shows up in your picture.`;
       document.getElementById("cash-gap-log-link")?.addEventListener("click", (e) => {
         e.preventDefault();
         document.getElementById("cash-entry-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
