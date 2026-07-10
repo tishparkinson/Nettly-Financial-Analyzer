@@ -37,7 +37,8 @@ import {
   overallNeedsShare,
   feesSummary,
   merchantVelocity,
-  detectPayCycle
+  detectPayCycle,
+  buildPaycheckTimeline
 } from "./patterns.js";
 import {
   loadState,
@@ -1264,7 +1265,80 @@ document.getElementById("btn-add-cash-entry")?.addEventListener("click", () => {
   renderDashboard();
 });
 
-// ── Spending Patterns (client-side only, no AI, no external calls) ────────
+// Purchase / Income mode toggle
+document.querySelectorAll(".cash-entry-mode-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".cash-entry-mode-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const isIncome = btn.dataset.mode === "income";
+    document.getElementById("cash-entry-purchase-fields")?.classList.toggle("hidden", isIncome);
+    document.getElementById("cash-entry-income-fields")?.classList.toggle("hidden", !isIncome);
+  });
+});
+
+document.getElementById("btn-add-cash-income")?.addEventListener("click", () => {
+  const desc = document.getElementById("cash-income-desc").value.trim();
+  const amountRaw = document.getElementById("cash-income-amount").value;
+  const amount = Number(amountRaw);
+  const dateInput = document.getElementById("cash-income-date").value;
+
+  if (!desc || !amountRaw || !(amount > 0)) {
+    alert("Add where it's from and an amount greater than $0.");
+    return;
+  }
+
+  const date = dateInput || new Date().toISOString().slice(0, 10);
+  const nickname = "Cash Wallet";
+
+  if (!state.accounts.find((a) => a.nickname === nickname)) {
+    state.accounts.push({ nickname, type: "Cash" });
+  }
+
+  const tx = {
+    id: uid(),
+    date,
+    description: desc,
+    amount: Math.abs(amount),
+    account: nickname,
+    accountType: "Cash",
+    type: "credit",
+    merchant: normalizeMerchant(desc),
+    category: "Income",
+    confidence: 1,
+    needWant: null,
+    isReimbursement: false,
+    tags: []
+  };
+
+  state.transactions.push(tx);
+  state.transactions = consolidateMerchantNames(state.transactions);
+  saveState(state);
+
+  document.getElementById("cash-income-desc").value = "";
+  document.getElementById("cash-income-amount").value = "";
+  document.getElementById("cash-income-date").value = "";
+
+  const confirmEl = document.getElementById("cash-entry-confirm");
+  if (confirmEl) {
+    confirmEl.classList.remove("hidden");
+    setTimeout(() => confirmEl.classList.add("hidden"), 2500);
+  }
+
+  renderDashboard();
+});
+
+document.getElementById("btn-save-prev-job-date")?.addEventListener("click", () => {
+  const val = document.getElementById("prev-job-last-paycheck")?.value;
+  if (!val) {
+    alert("Pick the date of the last paycheck from the previous job first.");
+    return;
+  }
+  state.previousJobLastPaycheckDate = val;
+  saveState(state);
+  renderPaycheckTimeline();
+});
+
+
 function renderPatternInsights(txs) {
   const container = document.getElementById("pattern-insights-list");
   if (!container) return;
@@ -1570,6 +1644,42 @@ function renderWhatToDo(txs) {
   }
 }
 
+function renderPaycheckTimeline() {
+  const el = document.getElementById("paycheck-timeline-content");
+  if (!el) return;
+
+  const prevJobInput = document.getElementById("prev-job-last-paycheck");
+  if (prevJobInput && state.previousJobLastPaycheckDate) prevJobInput.value = state.previousJobLastPaycheckDate;
+
+  const timeline = buildPaycheckTimeline(state.transactions, 4, state.previousJobLastPaycheckDate || null);
+  if (!timeline.available) {
+    el.innerHTML = `<p class="small">${escapeHtml(timeline.reason || "Add more income history to see this.")}</p>`;
+    return;
+  }
+
+  el.innerHTML = timeline.segments.map((s) => {
+    const dateLabel = s.isFirstSegment
+      ? `Right now through ${s.end}`
+      : `${s.start} – ${s.end}`;
+    const incomeLine = s.isFirstSegment
+      ? `${fmtMoney(s.alreadyOnHand)} already on hand${s.incomeExpected > s.alreadyOnHand ? ` + ${fmtMoney(s.incomeExpected - s.alreadyOnHand)} arriving` : ""}`
+      : `${fmtMoney(s.incomeExpected)} expected`;
+    const billsList = s.bills.length
+      ? s.bills.map((b) => `<div style="display:flex;justify-content:space-between;padding:0.1rem 0;font-size:0.82rem;"><span>${escapeHtml(b.merchant)}</span><span>${fmtMoney(b.amount)} · ~${escapeHtml(b.expectedDate)}</span></div>`).join("")
+      : `<p class="small" style="margin:0.2rem 0;">No bills expected in this window.</p>`;
+    const roomHtml = s.roomToWorkWith > 0
+      ? `<p class="small" style="margin-top:0.35rem;color:var(--teal);font-weight:600;">${fmtMoney(s.roomToWorkWith)} left after bills — a chance to add to the Safety Net.</p>`
+      : `<p class="small" style="margin-top:0.35rem;color:var(--muted);">Bills use up what's expected in this window.</p>`;
+
+    return `<div style="padding:0.6rem 0;border-bottom:1px solid var(--border);">
+      <div style="font-weight:600;color:var(--navy);font-size:0.88rem;">${escapeHtml(dateLabel)}</div>
+      <p class="small" style="margin:0.15rem 0;">${incomeLine} · ${fmtMoney(s.billsTotal)} in expected bills</p>
+      ${billsList}
+      ${roomHtml}
+    </div>`;
+  }).join("");
+}
+
 function renderSafeSpendingBox() {
   const rangeEl = document.getElementById("safe-spending-range");
   const daysEl = document.getElementById("safe-spending-days");
@@ -1638,6 +1748,7 @@ function renderDashboard() {
     }
   }
 
+  renderPaycheckTimeline();
   renderSafeSpendingBox();
   renderCantMissZone(txs);
   document.getElementById("months-covered").textContent = fmtMonths(months);
