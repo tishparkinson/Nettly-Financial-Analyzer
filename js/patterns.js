@@ -259,9 +259,21 @@ export function predictUpcomingPaydays(transactions, weeksAhead = 4, previousJob
     // direct evidence either way in this person's own history yet.
     const shiftDirection = afterVotes > beforeVotes ? "after" : "before";
 
+    const amounts = c.entries.map((e) => e.amount);
+    const avgAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+    const amtVariance = amounts.reduce((s, a) => s + (a - avgAmount) ** 2, 0) / amounts.length;
+    const amtStdev = Math.sqrt(amtVariance);
+    // Only worth showing as a range if the variance is meaningful relative
+    // to the average — a salaried paycheck that's identical every time
+    // should show as one clean number, not a manufactured range.
+    const isVariable = avgAmount > 0 && amtStdev / avgAmount > 0.05;
+
     return {
       dayOfMonth: modeDay,
-      avgAmount: Math.round(c.entries.reduce((s, e) => s + e.amount, 0) / c.entries.length),
+      avgAmount: Math.round(avgAmount),
+      amountLow: isVariable ? Math.round(Math.max(avgAmount - amtStdev, 0)) : Math.round(avgAmount),
+      amountHigh: isVariable ? Math.round(avgAmount + amtStdev) : Math.round(avgAmount),
+      isVariable,
       shiftDirection
     };
   });
@@ -279,7 +291,14 @@ export function predictUpcomingPaydays(transactions, weeksAhead = 4, previousJob
       if (wasShifted) dateStr = shiftToBusinessDay(dateStr, p.shiftDirection);
 
       if (dateStr >= today.toISOString().slice(0, 10) && dateStr <= endDate.toISOString().slice(0, 10)) {
-        predicted.push({ date: dateStr, expectedAmount: p.avgAmount, wasShifted });
+        predicted.push({
+          date: dateStr,
+          expectedAmount: p.avgAmount,
+          amountLow: p.amountLow,
+          amountHigh: p.amountHigh,
+          isVariable: p.isVariable,
+          wasShifted
+        });
       }
     }
     cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
@@ -360,6 +379,13 @@ export function buildPaycheckTimeline(transactions, weeksAhead = 4, previousJobL
     const incomeExpected = isFirstSegment
       ? onHandAmount + paydaysInSegment.reduce((s, p) => s + p.expectedAmount, 0)
       : paydaysInSegment.reduce((s, p) => s + p.expectedAmount, 0);
+    const incomeLow = isFirstSegment
+      ? onHandAmount + paydaysInSegment.reduce((s, p) => s + p.amountLow, 0)
+      : paydaysInSegment.reduce((s, p) => s + p.amountLow, 0);
+    const incomeHigh = isFirstSegment
+      ? onHandAmount + paydaysInSegment.reduce((s, p) => s + p.amountHigh, 0)
+      : paydaysInSegment.reduce((s, p) => s + p.amountHigh, 0);
+    const hasVariableIncome = paydaysInSegment.some((p) => p.isVariable);
     const bills = predictBillsInWindow(transactions, start, end);
     const billsTotal = bills.reduce((s, b) => s + b.amount, 0);
 
@@ -370,9 +396,14 @@ export function buildPaycheckTimeline(transactions, weeksAhead = 4, previousJobL
       alreadyOnHand: isFirstSegment ? onHandAmount : 0,
       paydaysInSegment,
       incomeExpected,
+      incomeLow,
+      incomeHigh,
+      hasVariableIncome,
       bills,
       billsTotal,
-      roomToWorkWith: Math.round(incomeExpected - billsTotal)
+      roomToWorkWith: Math.round(incomeExpected - billsTotal),
+      roomLow: Math.round(incomeLow - billsTotal),
+      roomHigh: Math.round(incomeHigh - billsTotal)
     });
   }
 
