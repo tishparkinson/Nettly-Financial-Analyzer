@@ -220,6 +220,7 @@
       <div class="card" id="paycheck-timeline-box" style="border:1.5px solid var(--navy);">
         <h3 style="margin:0 0 0.5rem;">The Next 4 Weeks</h3>
         <div id="paycheck-timeline-content"></div>
+        <p class="small" style="margin-top:0.5rem;color:var(--muted);">💡 Bills that swing seasonally (like heating) get a wider range here the more history is pasted — a full year, if available, picks up a real winter-vs-summer swing that 3 months sampled from one season can't show. That only holds if the underlying bill hasn't changed for another reason (a move, a new provider, a plan change) — the system can't tell a seasonal swing apart from a permanent jump, so both would just show up as one blended, wider range.</p>
         <details style="margin-top:0.6rem;padding-top:0.5rem;border-top:1px solid var(--border);">
           <summary style="font-size:0.82rem;color:var(--teal);cursor:pointer;font-weight:600;list-style:none;">▸ Income stopped or changed recently?</summary>
           <div style="margin-top:0.5rem;">
@@ -292,9 +293,12 @@
         <span class="badge" id="stability-label">Stable</span>
       </div>
 
+      <div id="sn-contribution-nudge" class="hidden" style="background:#e8f4f4;border:1px solid #c5dede;border-radius:10px;padding:0.6rem 0.85rem;margin-bottom:0.75rem;font-size:0.88rem;"></div>
+
       <div class="card">
         <h3>Safety Net history</h3>
         <p class="small" id="sn-history">History begins when you start Nettly.</p>
+        <button type="button" class="btn btn-secondary" id="btn-update-sn" style="margin-top:0.5rem;">Update Safety Net Balance</button>
       </div>
 
       <div class="card">
