@@ -33,7 +33,10 @@ import {
   smallPurchaseBlindness,
   detectSpendingSprees,
   safeSpendingUntilPayday,
-  visitFrequencyChange
+  visitFrequencyChange,
+  overallNeedsShare,
+  feesSummary,
+  merchantVelocity
 } from "./patterns.js";
 import {
   loadState,
@@ -49,6 +52,7 @@ import { ensureAccess, unlockWithKey } from "./access.js";
 let state = loadState();
 let pendingPaste = [];
 let overlapFlag = false;
+let lastImportSummary = null;
 let activeTag = null;
 
 const screens = {
@@ -66,6 +70,13 @@ const screens = {
 function show(name) {
   Object.values(screens).forEach((el) => el && el.classList.remove("active"));
   if (screens[name]) screens[name].classList.add("active");
+  if (name === "home") {
+    const hasData = state.transactions.length > 0;
+    const firstTimeEl = document.getElementById("home-first-time");
+    const returningEl = document.getElementById("home-returning");
+    if (firstTimeEl) firstTimeEl.classList.toggle("hidden", hasData);
+    if (returningEl) returningEl.classList.toggle("hidden", !hasData);
+  }
   if (name === "upload") {
     updateLastImportedHint();
     const hint = document.getElementById("cutoff-date-hint");
@@ -162,28 +173,31 @@ document.getElementById("link-home-footer").addEventListener("click", (e) => {
 // --- Upload ---
 document.getElementById("btn-upload-back").addEventListener("click", () => show("home"));
 
-document.getElementById("btn-upload-start-over").addEventListener("click", () => {
-  if (!confirm("Clear everything and start fresh? This removes all accounts and transactions you\'ve added.")) return;
+function startOverFlow() {
+  if (!confirm("Clear everything and start fresh? This removes all accounts and transactions you've added.")) return;
   state = defaultState();
   pendingPaste = [];
   overlapFlag = false;
   saveState(state);
-  document.getElementById("acct-nickname").value = "";
-  document.getElementById("paste-tx").value = "";
-  document.getElementById("pending-accounts").classList.add("hidden");
-  document.getElementById("account-list").innerHTML = "";
+  const nicknameEl = document.getElementById("acct-nickname");
+  const pasteEl = document.getElementById("paste-tx");
+  const pendingEl = document.getElementById("pending-accounts");
+  const listEl = document.getElementById("account-list");
+  if (nicknameEl) nicknameEl.value = "";
+  if (pasteEl) pasteEl.value = "";
+  if (pendingEl) pendingEl.classList.add("hidden");
+  if (listEl) listEl.innerHTML = "";
   show("home");
-});
-
-const ATM_CASH_ALERT_TEXT =
-  "💵 This money is about to go off the grid.\n\nLog what you buy with it, or it disappears from your picture entirely.";
-
-function maybeShowAtmCashAlert(categoriesInvolved) {
-  const list = Array.isArray(categoriesInvolved) ? categoriesInvolved : [categoriesInvolved];
-  if (list.includes("ATM Withdrawal / Cash")) {
-    alert(ATM_CASH_ALERT_TEXT);
-  }
 }
+
+document.getElementById("btn-upload-start-over").addEventListener("click", startOverFlow);
+
+document.getElementById("btn-home-start-over")?.addEventListener("click", startOverFlow);
+
+document.getElementById("btn-home-add-more")?.addEventListener("click", () => {
+  pendingPaste = [];
+  show("upload");
+});
 
 // Keep the nickname field pre-filled with a sensible default (matching the
 // selected account type) unless the person has typed their own name — a
@@ -224,14 +238,34 @@ document.getElementById("btn-add-account").addEventListener("click", () => {
     alert("Add an account nickname and paste some transactions.");
     return;
   }
-  if (last4) {
-    if (!state.accountDigits) state.accountDigits = {};
-    state.accountDigits[last4] = { nickname, type: accountType };
-  }
   const parsed = parseTransactions(text, nickname, accountType);
   if (!parsed.length) {
     alert("We could not find transactions in that paste. Try including dates and amounts on each line.");
     return;
+  }
+
+  // 3 months is the minimum for reliable recurring-bill and pace-comparison
+  // detection — but a genuine gap in activity can look the same as "didn't
+  // paste far enough," so this asks rather than blocks.
+  const threeMonthsAgo = new Date();
+  threeMonthsAgo.setDate(threeMonthsAgo.getDate() - 90);
+  const threeMonthsAgoStr = threeMonthsAgo.toISOString().slice(0, 10);
+  const earliestDate = parsed.reduce((min, tx) => (tx.date < min ? tx.date : min), parsed[0].date);
+
+  if (earliestDate > threeMonthsAgoStr) {
+    const earliestLabel = new Date(earliestDate + "T12:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric" });
+    const targetLabel = threeMonthsAgo.toLocaleDateString("en-US", { month: "long", day: "numeric" });
+    const proceed = confirm(
+      `The earliest transaction here is from ${earliestLabel} — that's less than the 3 months we recommend (back to ${targetLabel}) for reliable insights.\n\n` +
+      `If this account genuinely had no activity before ${earliestLabel}, click OK to continue as-is.\n\n` +
+      `If you just didn't copy far enough back, click Cancel and re-paste starting from ${targetLabel}.`
+    );
+    if (!proceed) return;
+  }
+
+  if (last4) {
+    if (!state.accountDigits) state.accountDigits = {};
+    state.accountDigits[last4] = { nickname, type: accountType };
   }
   pendingPaste.push({ nickname, accountType, transactions: parsed });
   document.getElementById("paste-tx").value = "";
@@ -294,9 +328,25 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 
   let categorized = applyCategories(added, state.merchantMemory, state.categoryNeedWant);
   categorized = applyTransferDigitMatching(categorized);
+
+  // A quick, checkable receipt for this import — lets the person sanity-check
+  // against what they expect (roughly how many transactions, roughly what
+  // income/spending should look like) without needing to see their own data.
+  if (categorized.length) {
+    const dates = categorized.map((tx) => tx.date).sort();
+    const income = categorized.filter((tx) => tx.amount > 0).reduce((s, tx) => s + tx.amount, 0);
+    const spending = categorized.filter((tx) => tx.amount < 0).reduce((s, tx) => s + Math.abs(tx.amount), 0);
+    lastImportSummary = {
+      count: categorized.length,
+      oldestDate: dates[0],
+      newestDate: dates.at(-1),
+      income: Math.round(income),
+      spending: Math.round(spending)
+    };
+  }
+
   state.transactions = state.transactions.concat(categorized);
   state.transactions = consolidateMerchantNames(state.transactions);
-  maybeShowAtmCashAlert(categorized.map((tx) => tx.category));
 
   // Auto-detect recurring transactions before review
   const recurringMap = detectRecurring45(state.transactions);
@@ -316,6 +366,10 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
   if (candidateMerchantsForWizard(state.transactions, state.merchantNeedWant || {}).length) {
     startNeedsWizard(false);
   } else {
+    if (lastImportSummary) {
+      const s = lastImportSummary;
+      alert(`Added ${s.count} transaction${s.count !== 1 ? "s" : ""}, ${s.oldestDate} to ${s.newestDate} — ${fmtMoney(s.income)} income, ${fmtMoney(s.spending)} spending.`);
+    }
     show("safety");
     renderSafetySummary();
   }
@@ -328,14 +382,14 @@ document.getElementById("btn-analyze").addEventListener("click", () => {
 // GUIDED NEEDS WIZARD
 // ═══════════════════════════════════════════════════════
 const NEED_WIZARD_SLOTS = [
-  { key: "housing", label: "Housing", hint: "Your rent or mortgage payment." },
-  { key: "utilities", label: "Utilities", hint: "Electric, gas, water, sewer, trash — pick as many as apply. If these are included in rent, choose None." },
-  { key: "debt", label: "Debt & Credit Payments", hint: "Credit cards, loans, anything you make required payments on. Include the full payment even if it's more than the minimum — it's still necessary, not discretionary." },
-  { key: "transportation", label: "Transportation", hint: "Car payment, gas, transit pass — regular transportation costs. If a gas station is mostly your work commute, it's a Need. If a lot of your driving is trips and errands for fun, some of that gas is really part of the Want it's funding — worth keeping in mind." },
-  { key: "groceries", label: "Groceries", hint: "Your regular grocery store(s)." },
-  { key: "healthcare", label: "Healthcare", hint: "Doctor, pharmacy, health insurance premiums." },
-  { key: "insurance", label: "Insurance", hint: "Auto, home/renters, life — any insurance not already covered above." },
-  { key: "phone", label: "Phone", hint: "Your phone bill." }
+  { key: "housing", label: "Housing", hint: "Somewhere in the list below is the most recent rent or mortgage payment. One tap marks it as a Need. No payment to find? \"None\" below covers that." },
+  { key: "utilities", label: "Utilities", hint: "Electric, gas, water, sewer, trash — as many as apply can get tapped below. A bundled bill counts as one. Already included in rent? \"None\" takes care of that." },
+  { key: "debt", label: "Debt & Credit Payments", hint: "Credit cards, loans, anything with a required payment. The full amount counts here, even above the minimum — still necessary either way." },
+  { key: "transportation", label: "Transportation", hint: "A car payment, regular gas, a transit pass. One note worth having: gas for getting to work usually belongs here; gas for a fun outing leans closer to a Want." },
+  { key: "groceries", label: "Groceries", hint: "Wherever the regular grocery run happens." },
+  { key: "healthcare", label: "Healthcare", hint: "Doctor visits, pharmacy, health insurance premiums." },
+  { key: "insurance", label: "Insurance", hint: "Auto, home or renters, life — anything not already covered above." },
+  { key: "phone", label: "Phone", hint: "The regular phone bill." }
 ];
 
 let wizardSlotIndex = 0;
@@ -351,6 +405,17 @@ function startNeedsWizard(returnsToDashboard) {
   wizardCustomNeeds = [];
   showFloatingBtn();
   renderWizardSlot();
+
+  const summaryEl = document.getElementById("wizard-import-summary");
+  if (summaryEl) {
+    if (lastImportSummary) {
+      const s = lastImportSummary;
+      summaryEl.textContent = `Added ${s.count} transaction${s.count !== 1 ? "s" : ""}, ${s.oldestDate} to ${s.newestDate} — ${fmtMoney(s.income)} income, ${fmtMoney(s.spending)} spending. Worth a quick glance to make sure that matches what's expected.`;
+    } else {
+      summaryEl.textContent = "";
+    }
+  }
+
   show("needsWizard");
 }
 
@@ -360,39 +425,34 @@ function currentWizardConfirmedMerchants() {
   return { ...(state.merchantNeedWant || {}), ...wizardConfirmedNeeds };
 }
 
-function renderWizardChecklist() {
-  const el = document.getElementById("wizard-checklist");
-  if (!el) return;
-  el.innerHTML = NEED_WIZARD_SLOTS.map((slot, i) => {
-    const done = i < wizardSlotIndex;
-    const current = i === wizardSlotIndex;
-    const bg = done ? "var(--teal)" : current ? "var(--navy)" : "#f0f0f0";
-    const color = done || current ? "#fff" : "var(--muted)";
-    return `<span style="font-size:0.72rem;padding:0.2rem 0.55rem;border-radius:999px;background:${bg};color:${color};">${done ? "✓ " : ""}${escapeHtml(slot.label)}</span>`;
-  }).join("");
+function updateWizardProgressBar() {
+  const bar = document.getElementById("wizard-progress-bar");
+  const label = document.getElementById("wizard-progress");
+  const pct = Math.round((wizardSlotIndex / NEED_WIZARD_SLOTS.length) * 100);
+  if (bar) bar.style.width = `${pct}%`;
+  if (label) label.textContent = `Step ${wizardSlotIndex + 1} of ${NEED_WIZARD_SLOTS.length}`;
 }
 
 function renderWizardSlot() {
   const slot = NEED_WIZARD_SLOTS[wizardSlotIndex];
   wizardSlotSelections = new Set();
 
-  renderWizardChecklist();
+  updateWizardProgressBar();
   document.getElementById("wizard-slot-title").textContent = slot.label;
   document.getElementById("wizard-slot-hint").textContent = slot.hint;
-  document.getElementById("wizard-progress").textContent = `Step ${wizardSlotIndex + 1} of ${NEED_WIZARD_SLOTS.length}`;
 
   const candidates = candidateMerchantsForWizard(state.transactions, currentWizardConfirmedMerchants());
   const listEl = document.getElementById("wizard-merchant-list");
 
   if (!candidates.length) {
-    listEl.innerHTML = `<p class="small">No remaining merchants to choose from.</p>`;
+    listEl.innerHTML = `<p class="small" style="padding:0.75rem 0;">Nothing left to choose from here.</p>`;
   } else {
     listEl.innerHTML = candidates.map((c) => `
       <label class="wizard-merchant-row" style="display:flex;align-items:center;gap:0.6rem;padding:0.6rem 0;border-bottom:1px solid var(--border);cursor:pointer;">
         <input type="checkbox" class="wizard-merchant-check" value="${escapeAttr(c.merchant)}" style="width:auto;flex-shrink:0;">
         <span style="flex:1;min-width:0;">
           <span style="font-weight:600;color:var(--navy);">${escapeHtml(c.merchant)}</span>${c.isRecurring ? ' <span class="small" style="color:var(--teal);">· recurring</span>' : ""}
-          <div class="small">${fmtMoney(c.total)} total · seen ${c.count} time${c.count > 1 ? "s" : ""}</div>
+          <div class="small">${fmtMoney(c.maxAmount)} largest charge · ${fmtMoney(c.total)} total · seen ${c.count} time${c.count > 1 ? "s" : ""}</div>
         </span>
       </label>
     `).join("");
@@ -1359,6 +1419,20 @@ function renderCantMissZone(txs) {
 }
 
 function renderWhatToDo(txs) {
+  // Needs as % of income — purely informational, no judgment attached
+  const needsShareEl = document.getElementById("needs-share-callout");
+  if (needsShareEl) {
+    const result = overallNeedsShare(txs, 30);
+    if (result.available) {
+      needsShareEl.classList.remove("hidden");
+      needsShareEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Needs, as a share of income</div>
+        <p class="small" style="margin-top:0.2rem;">${fmtMoney(result.monthlyNeeds)}/mo on needs — ${result.pctOfIncome}% of income, leaving about ${result.remainingPct}% for wants, savings, and everything else.</p>`;
+    } else {
+      needsShareEl.classList.add("hidden");
+    }
+  }
+
   // Average spend per merchant (day/week/month) — simple, concrete, collapsed by default
   const ratesEl = document.getElementById("merchant-spend-rates");
   if (ratesEl) {
@@ -1380,6 +1454,35 @@ function renderWhatToDo(txs) {
         <p class="small" style="margin-top:0.5rem;">Based on ${result.spanDays} days of imported history.</p>`;
     } else {
       ratesEl.innerHTML = `<p class="small">${escapeHtml(result.reason || "No spending yet to break down.")}</p>`;
+    }
+  }
+
+  // Merchant Velocity — how often, on average
+  const velocityEl = document.getElementById("merchant-velocity");
+  if (velocityEl) {
+    const result = merchantVelocity(txs);
+    if (result.available && result.items.length) {
+      velocityEl.innerHTML = result.items.map((v) => `
+        <div style="display:flex;justify-content:space-between;padding:0.3rem 0;border-bottom:1px solid var(--border);">
+          <span>${escapeHtml(v.merchant)}</span>
+          <span class="small">every ${v.avgDays} day${v.avgDays !== 1 ? "s" : ""} · ${v.count} visits</span>
+        </div>`).join("");
+    } else {
+      velocityEl.innerHTML = `<p class="small">Need 3+ purchases from a merchant to compute a pattern here.</p>`;
+    }
+  }
+
+  // Fees: ATM, overdraft, late, interest — totaled up
+  const feesEl = document.getElementById("fees-callout");
+  if (feesEl) {
+    const result = feesSummary(txs, 90);
+    if (result.available) {
+      feesEl.classList.remove("hidden");
+      feesEl.innerHTML = `
+        <div style="font-size:0.85rem;font-weight:600;color:var(--navy);">Fees & Interest Charges</div>
+        <p class="small" style="margin-top:0.2rem;">${fmtMoney(result.total)} over the last ${result.windowDays} days — ${result.items.map((i) => `${escapeHtml(i.label)}: ${fmtMoney(i.amount)}`).join(", ")}.</p>`;
+    } else {
+      feesEl.classList.add("hidden");
     }
   }
 
@@ -1515,6 +1618,22 @@ function renderDashboard() {
   const records = state.personalRecords || {};
 
   document.getElementById("overlap-notice").classList.toggle("hidden", !overlapFlag);
+
+  const cashGapEl = document.getElementById("cash-gap-banner");
+  if (cashGapEl) {
+    const gap = cashGapSummary(state.transactions, 30);
+    if (gap.hasWithdrawals && gap.cashGap > 5) {
+      cashGapEl.classList.remove("hidden");
+      cashGapEl.innerHTML = `💵 ${fmtMoney(gap.cashWithdrawn)} withdrawn as cash in the last 30 days, but only ${fmtMoney(gap.cashLogged)} logged as spent — ${fmtMoney(gap.cashGap)} is unaccounted for. <a href="#" id="cash-gap-log-link" style="color:#7a5000;font-weight:600;">Log it now</a> so it shows up in your picture.`;
+      document.getElementById("cash-gap-log-link")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        document.getElementById("cash-entry-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    } else {
+      cashGapEl.classList.add("hidden");
+    }
+  }
+
   renderSafeSpendingBox();
   renderCantMissZone(txs);
   document.getElementById("months-covered").textContent = fmtMonths(months);
