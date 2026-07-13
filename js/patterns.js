@@ -104,7 +104,7 @@ export function detectPayCycle(transactions, windowDays) {
   cutoff.setDate(cutoff.getDate() - windowDays);
 
   const incomeTx = transactions
-    .filter((tx) => tx.amount > 0 && tx.category === "Income" && inWindow(tx, cutoff))
+    .filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime && inWindow(tx, cutoff))
     .sort((a, b) => a.date.localeCompare(b.date));
 
   if (incomeTx.length < 3) return null;
@@ -190,7 +190,7 @@ function shiftToBusinessDay(dateStr, direction) {
 }
 
 export function predictUpcomingPaydays(transactions, weeksAhead = 4, previousJobLastPaycheckDate = null) {
-  const incomeTx = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income");
+  const incomeTx = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime);
   if (incomeTx.length < 2) {
     return { available: false, reason: "Need at least a couple of income deposits in history to predict paydays." };
   }
@@ -306,6 +306,45 @@ export function predictUpcomingPaydays(transactions, weeksAhead = 4, previousJob
   predicted.sort((a, b) => a.date.localeCompare(b.date));
 
   return { available: predicted.length > 0, paydays: predicted };
+}
+
+/**
+ * Flags income deposits that don't fit the established pay rhythm —
+ * candidates for "was this a one-time thing?" (sold something, a gift, a
+ * refund). Uses gap-based comparison against the detected cycle length
+ * (same detection as detectPayCycle), not day-of-month clustering — a true
+ * biweekly schedule drifts through most of the calendar month (1st, 15th,
+ * 29th, 12th, 26th...), so day-of-month grouping only catches it by
+ * coincidence. Gap length between consecutive deposits is what's actually
+ * reliable regardless of pay frequency.
+ */
+export function detectUnusualIncome(transactions) {
+  const incomeTx = transactions
+    .filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (incomeTx.length < 3) return { available: false, unusual: [] };
+
+  // Median gap, not mean — a single outlier transaction (the exact thing
+  // being detected) can drag a mean-based baseline off just enough to make
+  // itself look like it fits. Median resists that.
+  const gaps = [];
+  for (let i = 1; i < incomeTx.length; i++) gaps.push(daysBetween(incomeTx[i].date, incomeTx[i - 1].date));
+  const sortedGaps = [...gaps].sort((a, b) => a - b);
+  const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+  if (!medianGap) return { available: false, unusual: [] };
+
+  const tolerance = Math.min(Math.max(medianGap * 0.2, 3), 5);
+
+  const unusual = [];
+  for (let i = 0; i < incomeTx.length; i++) {
+    const tx = incomeTx[i];
+    const prevGap = i > 0 ? daysBetween(tx.date, incomeTx[i - 1].date) : null;
+    const nextGap = i < incomeTx.length - 1 ? daysBetween(incomeTx[i + 1].date, tx.date) : null;
+    const fitsPattern = [prevGap, nextGap].some((g) => g != null && Math.abs(g - medianGap) <= tolerance);
+    if (!fitsPattern) unusual.push(tx);
+  }
+
+  return { available: unusual.length > 0, unusual: unusual.sort((a, b) => b.date.localeCompare(a.date)) };
 }
 
 function predictBillsInWindow(transactions, startDate, endDate) {
@@ -498,7 +537,7 @@ export function paydayProximityEffect(transactions, windowDays, proximityDays = 
 function estimateMonthlyIncome(transactions, windowDays) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - windowDays);
-  const income = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income" && inWindow(tx, cutoff));
+  const income = transactions.filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime && inWindow(tx, cutoff));
   if (!income.length) return null;
   const total = income.reduce((s, tx) => s + tx.amount, 0);
   const spanDays = Math.max(daysBetween(new Date(), cutoff), 1);
@@ -1041,7 +1080,7 @@ export function topWantMerchantByMonth(transactions, monthsBack = 6) {
     });
 
     const income = monthTx
-      .filter((tx) => tx.amount > 0 && tx.category === "Income")
+      .filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime)
       .reduce((s, tx) => s + tx.amount, 0);
 
     const wants = monthTx.filter((tx) => tx.amount < 0 && tx.needWant === "want" && !tx.isOneTime && !NON_SPEND_CATEGORIES.has(tx.category));
@@ -1083,7 +1122,7 @@ export function overallWantsTierByMonth(transactions, monthsBack = 6) {
     });
 
     const income = monthTx
-      .filter((tx) => tx.amount > 0 && tx.category === "Income")
+      .filter((tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime)
       .reduce((s, tx) => s + tx.amount, 0);
 
     const wants = monthTx
@@ -1234,7 +1273,7 @@ export function incomeAllocationTrend(transactions) {
     transactions.filter((tx) => { const d = new Date(tx.date); return d >= start && d < end && filterFn(tx); })
       .reduce((s, tx) => s + Math.abs(tx.amount), 0);
 
-  const isIncome = (tx) => tx.amount > 0 && tx.category === "Income";
+  const isIncome = (tx) => tx.amount > 0 && tx.category === "Income" && !tx.isOneTime;
   const isNeedSpend = (tx) => tx.amount < 0 && tx.needWant === "need" && !NON_SPEND_CATEGORIES.has(tx.category);
   const isWantSpend = (tx) => tx.amount < 0 && tx.needWant === "want" && !NON_SPEND_CATEGORIES.has(tx.category);
 
