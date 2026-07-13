@@ -40,7 +40,8 @@ import {
   detectPayCycle,
   buildPaycheckTimeline,
   safetyNetReservationSuggestions,
-  shortfallCutSuggestions
+  shortfallCutSuggestions,
+  detectUnusualIncome
 } from "./patterns.js";
 import {
   loadState,
@@ -1902,6 +1903,24 @@ function renderDashboard() {
       }
     } else {
       nudgeEl.classList.add("hidden");
+    }
+  }
+
+  const unusualEl = document.getElementById("unusual-income-nudge");
+  if (unusualEl) {
+    const result = detectUnusualIncome(state.transactions);
+    const top = result.available ? result.unusual[0] : null;
+    if (top) {
+      unusualEl.classList.remove("hidden");
+      unusualEl.innerHTML = `💵 ${fmtMoney(top.amount)} on ${escapeHtml(top.date)} doesn't match the regular pay pattern — a one-time thing (sold something, a gift, a refund)? <a href="#" id="mark-onetime-income-link" style="font-weight:600;">Mark as one-time</a> so it doesn't skew the averages.`;
+      document.getElementById("mark-onetime-income-link")?.addEventListener("click", (e) => {
+        e.preventDefault();
+        state.transactions = state.transactions.map((tx) => tx.id === top.id ? { ...tx, isOneTime: true } : tx);
+        saveState(state);
+        renderDashboard();
+      });
+    } else {
+      unusualEl.classList.add("hidden");
     }
   }
 
